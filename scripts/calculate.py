@@ -2,10 +2,17 @@
 # This creates a dataset of audio features from a playlist of songs
 
 import os
+import numpy as np
+import base64
+import zipfile
+from math import isclose
+from typing import Literal
 from torchmusic import Audio
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre
+from AutoMasher.fyp.audio import DemucsCollection
+from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
 from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder
-from AutoMasher.fyp.audio.dataset.create import process_audio as process_audio_
+from AutoMasher.fyp.audio.dataset.create import process_audio as process_audio_features
 from AutoMasher.fyp.util import is_ipython, clear_cuda
 from torchmusic.util import get_url, YouTubeURL
 import time
@@ -24,31 +31,56 @@ except ImportError:
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
+# Path stuff
 DATASET_PATH = "./resources/dataset/audio-infos-v3"
 DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
 ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
 PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
+SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
 LIST_SPLIT_SIZE = 300
 
+# Create the directories if they don't exist
 if not os.path.exists(DATASET_PATH):
     os.makedirs(DATASET_PATH)
 
 if not os.path.exists(DATAFILE_PATH):
     os.makedirs(DATAFILE_PATH)
 
+if not os.path.exists(SPECTROGRAM_SAVE_PATH):
+    os.makedirs(SPECTROGRAM_SAVE_PATH)
+
+# Config for the spectrogram part of the data collection
+# The math works out such that if we make the hop length 512, BPM 120
+# and sample rate 32768
+# Then the resulting image is exactly 128 frames
+# So if we combine 4 of these, we get 512 frames which makes me happy :)
+# Each bar is also exactly 2 seconds.
+# n_fft = 512 * 2 - 1, so output shape will be exactly 512 features
+TARGET_BPM = 120
+TARGET_SR = 32768
+TARGET_DURATION = 60 / TARGET_BPM * 4
+TARGET_NFRAMES = int(TARGET_SR * TARGET_DURATION)
+NFFT = 1023
+BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
+CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
+
 def filter_song(yt: YouTube) -> bool:
     """Returns True if the song should be processed, False otherwise."""
-    if yt.length >= 480 or yt.length < 120:
-        return False
+    try:
+        if yt.length >= 480 or yt.length < 120:
+            return False
 
-    if yt.age_restricted:
-        return False
+        if yt.age_restricted:
+            return False
 
-    if yt.views < 5e5:
-        return False
+        if yt.views < 5e5:
+            return False
 
-    return True
+        return True
+    except Exception as e:
+        write_error(f"Failed to filter song: {yt.watch_url}", e)
+        return False
 
 def clear_output():
     """Clears the output of the console."""
@@ -112,9 +144,77 @@ def get_processed_urls() -> set[YouTubeURL]:
                 processed_urls.add(url)
     return processed_urls
 
+def get_filename(url: YouTubeURL, part_id: Literal["V", "D", "I", "B", "N"], bar_number: int, bar_start: float, bar_duration: float):
+    """Get a unique filename (excluding extension) for your spectrogram file"""
+    arr = np.array([bar_start, bar_duration], dtype=np.float32)
+    arr.dtype = np.uint8 # type: ignore
+
+    # Make padding a multiple of 3 so that base64 encoding doesn't add padding
+    arr = np.concatenate((arr, np.zeros(1, dtype=np.uint8)))
+    b = arr.tobytes()
+
+    # The last padding byte can be removed. Add an "A" or whatever to un-remove it
+    x = base64.urlsafe_b64encode(b).decode('utf-8')[:-1]
+    # Now x must have 12 - 1 = 11 characters
+    assert len(x) == 11
+    return f"{url.video_id}-{part_id}{bar_number}-{x}"
+
+def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection, br: BeatAnalysisResult):
+    # Sanity check
+    if not isclose(audio.duration, br.get_duration()):
+        raise ValueError(f"Audio duration and beat analysis duration mismatch: {audio.duration} {br.get_duration()}")
+
+    if not isclose(audio.duration, parts.get_duration()):
+        raise ValueError(f"Audio duration and parts duration mismatch: {audio.duration} {parts.get_duration()}")
+
+    # Check beat alignment again just in case we change the verification rules
+    beat_align = np.abs(br.beats[:, None] - br.downbeats[None, :]).argmin(axis = 0)
+    beat_align[:-1] = beat_align[1:] - beat_align[:-1]
+
+    # Resample the audio and parts to the target sample rate
+    audio = audio.resample(TARGET_SR)
+    parts = parts.map(lambda x: x.resample(TARGET_SR))
+
+    for bar_number in range(br.nbars - 1):
+        if beat_align[bar_number] != 4:
+            continue
+
+        bar_start = br.downbeats[bar_number]
+        bar_end = br.downbeats[bar_number + 1]
+        bar_duration = bar_end - bar_start
+        assert bar_duration > 0
+
+        speed_factor = TARGET_DURATION/bar_duration
+        if not (0.9 < speed_factor < 1.1):
+            continue
+
+        with (
+            zipfile.ZipFile(os.path.join(SPECTROGRAM_SAVE_PATH, f"{url.video_id}.spectrograms"), 'w') as z,
+            tempfile.TemporaryDirectory() as tmpdirname
+        ):
+            for aud, part_id in zip((audio, parts.vocals, parts.drums, parts.other, parts.bass), "NVDIB"):
+                bar = aud.slice_seconds(bar_start, bar_end).change_speed(TARGET_DURATION/bar_duration)
+
+                # Pad the audio to exactly the target nframes for good measures
+                bar = bar.pad(TARGET_NFRAMES, front = False)
+                img = bar.stft(n_fft=NFFT, hop_length=512).to_image().clear()
+
+                assert img.nfeatures == 512
+                assert img.nframes == 128
+
+                # Encode everything into the filename
+                assert part_id in ("V", "D", "I", "B", "N") # To pass type checking
+                fn = get_filename(url, part_id, bar_number, bar_start, bar_duration) + ".png"
+                img.to_pil().save(os.path.join(tmpdirname, fn))
+                z.write(os.path.join(tmpdirname, fn), fn)
+
 def process_audio(audio: Audio, video_url: YouTubeURL, genre: SongGenre, encoder: DatasetEntryEncoder) -> None:
     """Processes a single audio entry and saves the necessary things."""
-    processed = process_audio_(audio, video_url, genre, verbose=True)
+    processed = process_audio_features(audio, video_url, genre,
+                                       chord_model_path=CHORD_MODEL_PATH,
+                                       beat_model_path=BEAT_MODEL_PATH,
+                                       reject_weird_meter=False,
+                                       verbose=True)
     if isinstance(processed, str):
         print(processed)
         with open(REJECTED_FILES_PATH, "a") as file:
@@ -124,6 +224,11 @@ def process_audio(audio: Audio, video_url: YouTubeURL, genre: SongGenre, encoder
 
     entry, parts = processed
     encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{video_url.video_id}.dat3"))
+
+    # Save the spectrogram features
+    print("Processing spectrogram features...")
+    br = BeatAnalysisResult.from_data_entry(entry)
+    process_spectrogram_features(audio, video_url, parts, br)
 
 def download_audio(urls: list[YouTubeURL]):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
@@ -149,9 +254,9 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
     """Main function to calculate the features of a list of URLs with a common genre."""
     t = time.time()
     last_t = None
-    nentries = len(os.listdir(DATAFILE_PATH))
+    audios = download_audio(urls) # Start downloading the audio first to save time
     encoder = DatasetEntryEncoder()
-    for i, (audio, url) in enumerate(download_audio(urls)):
+    for i, (audio, url) in enumerate(audios):
         if not audio:
             continue
 
@@ -160,7 +265,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
         last_t = time.time()
         print(f"Current time: {datetime.datetime.now()}")
-        print(f"Current number of entries: {nentries} {i}/{len(urls)} for current playlist.")
+        print(f"Current number of entries: {len(os.listdir(DATAFILE_PATH))} {i}/{len(urls)} for current playlist.")
         print(description)
         print(f"Last entry process time: {last_entry_process_time} seconds")
         print(f"Current entry: {url}")
@@ -219,7 +324,7 @@ def get_playlist_title_and_video(key: str) -> tuple[str, list[YouTubeURL]]:
     # Format error message
     too_many_requests = ("http" in str(e1).lower() and "429" in str(e1)) or ("http" in str(e2).lower() and "429" in str(e2))
     if too_many_requests:
-        for i in trange(600, desc="Waiting 5 minutes before we try again..."):
+        for _ in trange(600, desc="Waiting 5 minutes before we try again..."):
             time.sleep(0.5)
             return get_playlist_title_and_video(key)
 
@@ -297,12 +402,12 @@ def update_playlist_process_queue(success: bool, playlist_url: str, genre_name: 
                 file.write(line)
 
 def clean_playlist_queue():
-    """Cleans up """
+    """Cleans up the playlist queue by removing duplicates and empty lines."""
     with open(PLAYLIST_QUEUE_PATH, "r") as f:
         playlist = f.readlines()
 
     # Put a little suprise in the beginning to make sure that gets processed first
-    playlist = sorted(set([x.strip() for x in playlist]), key=lambda x: (x != "PL8v4gn9PG2qVOJnDcqDsGei8-xwlV0cHG", x))
+    playlist = sorted(set([x.strip() for x in playlist]), key=lambda x: ("PL8v4gn9PG2qVOJnDcqDsGei8-xwlV0cHG" not in x, x))
     playlist = [x for x in playlist if len(x.strip()) > 0]
 
     with open(PLAYLIST_QUEUE_PATH, "w") as f:
@@ -331,6 +436,8 @@ def main():
                 if len(urls) >= LIST_SPLIT_SIZE:
                     calculate_url_list(urls, SongGenre(genre_name), description=playlist_url)
                     urls.clear()
+            if urls:
+                calculate_url_list(urls, SongGenre(genre_name), description=playlist_url)
             update_playlist_process_queue(True, playlist_url, genre_name)
         except Exception as e:
             write_error(f"Failed to process playlist: {playlist_url} {genre_name}", e)
