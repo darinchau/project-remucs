@@ -22,6 +22,7 @@ import random
 import datetime
 from PIL import Image
 from remucs.util import SpectrogramCollection
+from threading import Thread
 
 try:
     from pytube import Playlist, YouTube, Channel
@@ -147,7 +148,6 @@ def get_processed_urls() -> set[YouTubeURL]:
                 processed_urls.add(url)
     return processed_urls
 
-
 def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection, br: BeatAnalysisResult, *,
                                  format: str = "png", save_path: str | None = None) -> SpectrogramCollection:
     """Processes the spectrogram features of the audio and saves it to the save path.
@@ -205,28 +205,6 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
     specs.save(save_path)
     return specs
 
-def process_audio(audio: Audio, video_url: YouTubeURL, genre: SongGenre, encoder: DatasetEntryEncoder) -> None:
-    """Processes a single audio entry and saves the necessary things."""
-    processed = process_audio_features(audio, video_url, genre,
-                                       chord_model_path=CHORD_MODEL_PATH,
-                                       beat_model_path=BEAT_MODEL_PATH,
-                                       reject_weird_meter=False,
-                                       verbose=True)
-    if isinstance(processed, str):
-        print(processed)
-        with open(REJECTED_FILES_PATH, "a") as file:
-            file.write(f"{video_url} {processed}\n")
-        time.sleep(1)
-        return
-
-    entry, parts = processed
-    encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{video_url.video_id}.dat3"))
-
-    # Save the spectrogram features
-    print("Processing spectrogram features...")
-    br = BeatAnalysisResult.from_data_entry(entry)
-    process_spectrogram_features(audio, video_url, parts, br)
-
 def download_audio(urls: list[YouTubeURL]):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
     def download_audio_single(url: str):
@@ -253,14 +231,19 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
     last_t = None
     audios = download_audio(urls) # Start downloading the audio first to save time
     encoder = DatasetEntryEncoder()
+    threads: list[Thread] = []
+    clear_output()
+
+    linesep = "\u2500" * os.get_terminal_size().columns
+
     for i, (audio, url) in enumerate(audios):
         if not audio:
             continue
 
-        clear_output()
-
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
         last_t = time.time()
+        print()
+        print(linesep)
         print(f"Current time: {datetime.datetime.now()}")
         print(f"Current number of entries: {len(os.listdir(DATAFILE_PATH))} {i}/{len(urls)} for current playlist.")
         print(description)
@@ -268,16 +251,50 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         print(f"Current entry: {url}")
         print(f"Time elapsed: {round(time.time() - t, 2)} seconds")
         print(f"Genre: {genre.value}")
+        print(linesep)
+        print()
 
         clear_cuda()
 
         try:
-            process_audio(audio, url, genre=genre, encoder=encoder)
+            processed = process_audio_features(audio, url, genre,
+                chord_model_path=CHORD_MODEL_PATH,
+                beat_model_path=BEAT_MODEL_PATH,
+                reject_weird_meter=False,
+                mean_vocal_threshold=0.01,
+                verbose=True)
+            if isinstance(processed, str):
+                print(processed)
+                with open(REJECTED_FILES_PATH, "a") as file:
+                    file.write(f"{url} {processed}\n")
+                continue
+
+            entry, parts = processed
+
+            # Save the spectrogram features
+            print("Processing spectrogram features...")
+
+            br = BeatAnalysisResult.from_data_entry(entry)
+            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br))
+            thread.start()
+            threads.append(thread)
+
+            # Save the data entry
+            encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{url.video_id}.dat3"))
             print(f"Entry processed: {url}")
         except Exception as e:
             write_error(f"Failed to process video: {url}", e)
-            continue
 
+        # Clean up all the threads that have finished
+        finished_count = 0
+        for thread in threads:
+            if not thread.is_alive():
+                thread.join()
+                threads.remove(thread)
+                finished_count += 1
+
+        if finished_count > 0:
+            print(f"{finished_count} spectrograms have saved in the background")
         print(f"Waiting for the next entry...")
     cleanup_temp_dir()
 
