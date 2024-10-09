@@ -74,3 +74,5 @@ nohup.out
 
 /resources/*
 *.ipynb
+
+scripts/playlist_queue.txt
