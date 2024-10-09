@@ -114,8 +114,9 @@ class SpectrogramCollection:
             "format": self.format,
         }
         metadata = json.dumps(metadata)
+        tmppath = path + ".tmp"
         with (
-            zipfile.ZipFile(path, 'w') as z,
+            zipfile.ZipFile(tmppath, 'w') as z,
             tempfile.TemporaryDirectory() as tmpdirname
         ):
             for _, (fn, img) in self.spectrograms.items():
@@ -126,6 +127,7 @@ class SpectrogramCollection:
                 z.write(os.path.join(tmpdirname, filename), filename)
 
             z.writestr("format.txt", metadata)
+        os.replace(tmppath, path)
 
     @staticmethod
     def load(path: str) -> SpectrogramCollection:

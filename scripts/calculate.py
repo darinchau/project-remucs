@@ -234,7 +234,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
     threads: list[Thread] = []
     clear_output()
 
-    linesep = "\u2500" * os.get_terminal_size().columns
+    linesep = "\u2500"
 
     for i, (audio, url) in enumerate(audios):
         if not audio:
@@ -243,7 +243,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
         last_t = time.time()
         print()
-        print(linesep)
+        print(linesep * os.get_terminal_size().columns)
         print(f"Current time: {datetime.datetime.now()}")
         print(f"Current number of entries: {len(os.listdir(DATAFILE_PATH))} {i}/{len(urls)} for current playlist.")
         print(description)
@@ -251,7 +251,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         print(f"Current entry: {url}")
         print(f"Time elapsed: {round(time.time() - t, 2)} seconds")
         print(f"Genre: {genre.value}")
-        print(linesep)
+        print(linesep * os.get_terminal_size().columns)
         print()
 
         clear_cuda()
@@ -296,6 +296,10 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         if finished_count > 0:
             print(f"{finished_count} spectrograms have saved in the background")
         print(f"Waiting for the next entry...")
+
+    # Wait for all the threads to finish
+    for thread in threads:
+        thread.join()
     cleanup_temp_dir()
 
 #### Driver code and functions ####
