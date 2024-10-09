@@ -7,14 +7,12 @@ import base64
 import zipfile
 from math import isclose
 from typing import Literal
-from torchmusic import Audio
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre
-from AutoMasher.fyp.audio import DemucsCollection
+from AutoMasher.fyp.audio import DemucsCollection, Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
 from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder
 from AutoMasher.fyp.audio.dataset.create import process_audio as process_audio_features
-from AutoMasher.fyp.util import is_ipython, clear_cuda
-from torchmusic.util import get_url, YouTubeURL
+from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL
 import time
 import traceback
 from tqdm.auto import tqdm, trange
@@ -22,6 +20,8 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import tempfile
 import random
 import datetime
+from PIL import Image
+from remucs.util import SpectrogramCollection
 
 try:
     from pytube import Playlist, YouTube, Channel
@@ -57,11 +57,14 @@ if not os.path.exists(SPECTROGRAM_SAVE_PATH):
 # So if we combine 4 of these, we get 512 frames which makes me happy :)
 # Each bar is also exactly 2 seconds.
 # n_fft = 512 * 2 - 1, so output shape will be exactly 512 features
+TARGET_FEATURES = 512
 TARGET_BPM = 120
 TARGET_SR = 32768
+SPEC_POWER = 1./4
+SPEC_MAX_VALUE = 80
 TARGET_DURATION = 60 / TARGET_BPM * 4
 TARGET_NFRAMES = int(TARGET_SR * TARGET_DURATION)
-NFFT = 1023
+NFFT = TARGET_FEATURES * 2 - 1
 BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
@@ -144,22 +147,11 @@ def get_processed_urls() -> set[YouTubeURL]:
                 processed_urls.add(url)
     return processed_urls
 
-def get_filename(url: YouTubeURL, part_id: Literal["V", "D", "I", "B", "N"], bar_number: int, bar_start: float, bar_duration: float):
-    """Get a unique filename (excluding extension) for your spectrogram file"""
-    arr = np.array([bar_start, bar_duration], dtype=np.float32)
-    arr.dtype = np.uint8 # type: ignore
 
-    # Make padding a multiple of 3 so that base64 encoding doesn't add padding
-    arr = np.concatenate((arr, np.zeros(1, dtype=np.uint8)))
-    b = arr.tobytes()
-
-    # The last padding byte can be removed. Add an "A" or whatever to un-remove it
-    x = base64.urlsafe_b64encode(b).decode('utf-8')[:-1]
-    # Now x must have 12 - 1 = 11 characters
-    assert len(x) == 11
-    return f"{url.video_id}-{part_id}{bar_number}-{x}"
-
-def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection, br: BeatAnalysisResult):
+def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection, br: BeatAnalysisResult, *,
+                                 format: str = "png", save_path: str | None = None) -> SpectrogramCollection:
+    """Processes the spectrogram features of the audio and saves it to the save path.
+    Assumes the default save path - the option is mainly for debug purposes only."""
     # Sanity check
     if not isclose(audio.duration, br.get_duration()):
         raise ValueError(f"Audio duration and beat analysis duration mismatch: {audio.duration} {br.get_duration()}")
@@ -172,8 +164,20 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
     beat_align[:-1] = beat_align[1:] - beat_align[:-1]
 
     # Resample the audio and parts to the target sample rate
-    audio = audio.resample(TARGET_SR)
+    audio = audio.resample(TARGET_SR).to_nchannels(2)
     parts = parts.map(lambda x: x.resample(TARGET_SR))
+
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=128,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format=format
+    )
 
     for bar_number in range(br.nbars - 1):
         if beat_align[bar_number] != 4:
@@ -188,25 +192,18 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
         if not (0.9 < speed_factor < 1.1):
             continue
 
-        with (
-            zipfile.ZipFile(os.path.join(SPECTROGRAM_SAVE_PATH, f"{url.video_id}.spectrograms"), 'w') as z,
-            tempfile.TemporaryDirectory() as tmpdirname
-        ):
-            for aud, part_id in zip((audio, parts.vocals, parts.drums, parts.other, parts.bass), "NVDIB"):
-                bar = aud.slice_seconds(bar_start, bar_end).change_speed(TARGET_DURATION/bar_duration)
+        for aud, part_id in zip((audio, parts.vocals, parts.drums, parts.other, parts.bass),
+                                ("N", "V", "D", "I", "B")):
+            bar = aud.slice_seconds(bar_start, bar_end).change_speed(TARGET_DURATION/bar_duration)
 
-                # Pad the audio to exactly the target nframes for good measures
-                bar = bar.pad(TARGET_NFRAMES, front = False)
-                img = bar.stft(n_fft=NFFT, hop_length=512).to_image().clear()
+            # Pad the audio to exactly the target nframes for good measures
+            bar = bar.pad(TARGET_NFRAMES, front = False)
+            specs.add_audio(bar, part_id, bar_number, bar_start, bar_duration)
 
-                assert img.nfeatures == 512
-                assert img.nframes == 128
-
-                # Encode everything into the filename
-                assert part_id in ("V", "D", "I", "B", "N") # To pass type checking
-                fn = get_filename(url, part_id, bar_number, bar_start, bar_duration) + ".png"
-                img.to_pil().save(os.path.join(tmpdirname, fn))
-                z.write(os.path.join(tmpdirname, fn), fn)
+    if save_path is None:
+        save_path = os.path.join(SPECTROGRAM_SAVE_PATH, f"{url.video_id}.spec.zip")
+    specs.save(save_path)
+    return specs
 
 def process_audio(audio: Audio, video_url: YouTubeURL, genre: SongGenre, encoder: DatasetEntryEncoder) -> None:
     """Processes a single audio entry and saves the necessary things."""

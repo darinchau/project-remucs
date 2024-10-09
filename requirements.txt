@@ -1,4 +1,4 @@
-git+https://github.com/darinchau/torchmusic
 git+https://github.com/darinchau/madmom
 datasets
 demucs~=4.0.0
+librosa
