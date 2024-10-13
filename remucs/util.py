@@ -112,6 +112,7 @@ class SpectrogramCollection:
             "target_width": self.target_width,
             "target_height": self.target_height,
             "format": self.format,
+            "spectrograms": [f"{id}{k}" for id, k in self.spectrograms.keys()]
         }
         metadata = json.dumps(metadata)
         tmppath = path + ".tmp"

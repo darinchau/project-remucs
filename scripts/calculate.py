@@ -202,7 +202,10 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
 
     if save_path is None:
         save_path = os.path.join(SPECTROGRAM_SAVE_PATH, f"{url.video_id}.spec.zip")
-    specs.save(save_path)
+
+    if len(specs.spectrograms) > 0:
+        specs.save(save_path)
+
     return specs
 
 def download_audio(urls: list[YouTubeURL]):
@@ -231,7 +234,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
     last_t = None
     audios = download_audio(urls) # Start downloading the audio first to save time
     encoder = DatasetEntryEncoder()
-    threads: list[Thread] = []
+    threads: dict[YouTubeURL, Thread] = {}
     clear_output()
 
     linesep = "\u2500"
@@ -277,7 +280,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
             br = BeatAnalysisResult.from_data_entry(entry)
             thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br))
             thread.start()
-            threads.append(thread)
+            threads[url] = thread
 
             # Save the data entry
             encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{url.video_id}.dat3"))
@@ -286,19 +289,17 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
             write_error(f"Failed to process video: {url}", e)
 
         # Clean up all the threads that have finished
-        finished_count = 0
-        for thread in threads:
+        for url, thread in list(threads.items()):
             if not thread.is_alive():
                 thread.join()
-                threads.remove(thread)
-                finished_count += 1
+                del threads[url]
+                print(f"{url} has finished processing")
 
-        if finished_count > 0:
-            print(f"{finished_count} spectrograms have saved in the background")
+        print(f"{len(threads)} threads remaining")
         print(f"Waiting for the next entry...")
 
     # Wait for all the threads to finish
-    for thread in threads:
+    for thread in threads.values():
         thread.join()
     cleanup_temp_dir()
 
