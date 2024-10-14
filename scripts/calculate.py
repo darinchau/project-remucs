@@ -12,7 +12,7 @@ from AutoMasher.fyp.audio import DemucsCollection, Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
 from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder
 from AutoMasher.fyp.audio.dataset.create import process_audio as process_audio_features
-from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL
+from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL, to_youtube
 import time
 import traceback
 from tqdm.auto import tqdm, trange
@@ -25,10 +25,10 @@ from remucs.util import SpectrogramCollection
 from threading import Thread
 
 try:
-    from pytube import Playlist, YouTube, Channel
+    from pytubefix import Playlist, YouTube, Channel
 except ImportError:
     try:
-        from pytubefix import Playlist, YouTube, Channel
+        from pytube import Playlist, YouTube, Channel
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
@@ -37,6 +37,7 @@ DATASET_PATH = "./resources/dataset/audio-infos-v3"
 DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
 ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
+DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
 PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
 SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
 LIST_SPLIT_SIZE = 300
@@ -69,21 +70,38 @@ NFFT = TARGET_FEATURES * 2 - 1
 BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
-def filter_song(yt: YouTube) -> bool:
+
+def filter_song(yt: YouTubeURL) -> bool:
     """Returns True if the song should be processed, False otherwise."""
+    def defer_video():
+        with open(DEFERRED_FILES_PATH, "a") as file:
+            file.write(f"{yt}\n")
+
     try:
-        if yt.length >= 480 or yt.length < 120:
+        # Fix the unchecked type cast issue that might arise
+        length = yt.get_length()
+        if length is None:
+            defer_video()
             return False
 
-        if yt.age_restricted:
+        if length >= 480 or length < 120:
             return False
 
-        if yt.views < 5e5:
+
+        views = yt.get_views()
+        if views is None:
+            defer_video()
+            return False
+
+        if views < 5e5:
+            return False
+
+        if to_youtube(yt).age_restricted:
             return False
 
         return True
     except Exception as e:
-        write_error(f"Failed to filter song: {yt.watch_url}", e)
+        write_error(f"Failed to filter song: {yt}", e)
         return False
 
 def clear_output():
@@ -210,8 +228,8 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
 
 def download_audio(urls: list[YouTubeURL]):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
-    def download_audio_single(url: str):
-        if not filter_song(YouTube(url)):
+    def download_audio_single(url: YouTubeURL):
+        if not filter_song(url):
             return None
         audio = Audio.load(url)
         return audio
@@ -228,13 +246,12 @@ def download_audio(urls: list[YouTubeURL]):
                 write_error(f"Failed to download audio (skipping): {url}", e)
                 yield None, url
 
-def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: str = ""):
+def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[YouTubeURL, Thread], description: str = ""):
     """Main function to calculate the features of a list of URLs with a common genre."""
     t = time.time()
     last_t = None
     audios = download_audio(urls) # Start downloading the audio first to save time
     encoder = DatasetEntryEncoder()
-    threads: dict[YouTubeURL, Thread] = {}
     clear_output()
 
     linesep = "\u2500"
@@ -299,8 +316,17 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, description: st
         print(f"Waiting for the next entry...")
 
     # Wait for all the threads to finish
-    for thread in threads.values():
-        thread.join()
+    # If not finish after 100 seconds, we just give up
+    for i in range(100):
+        if not threads:
+            break
+        for url, thread in list(threads.items()):
+            if not thread.is_alive():
+                thread.join()
+                del threads[url]
+                print(f"{url} has finished processing")
+        time.sleep(1)
+
     cleanup_temp_dir()
 
 #### Driver code and functions ####
@@ -448,15 +474,16 @@ def main():
             break
 
         playlist_url, genre_name = next_playlist
+        threads: dict[YouTubeURL, Thread] = {}
         try:
             urls: list[YouTubeURL] = []
             for url in get_playlist_video_urls(playlist_url):
                 urls.append(url)
                 if len(urls) >= LIST_SPLIT_SIZE:
-                    calculate_url_list(urls, SongGenre(genre_name), description=playlist_url)
+                    calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
                     urls.clear()
             if urls:
-                calculate_url_list(urls, SongGenre(genre_name), description=playlist_url)
+                calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
             update_playlist_process_queue(True, playlist_url, genre_name)
         except Exception as e:
             write_error(f"Failed to process playlist: {playlist_url} {genre_name}", e)
