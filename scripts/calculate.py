@@ -481,14 +481,21 @@ def main():
             for url in get_playlist_video_urls(playlist_url):
                 urls.append(url)
                 if len(urls) >= LIST_SPLIT_SIZE:
-                    calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
-                    urls.clear()
+                    calculate_url_list(urls[:LIST_SPLIT_SIZE], SongGenre(genre_name), threads, description=playlist_url)
+                    urls = urls[LIST_SPLIT_SIZE:]
             if urls:
                 calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
             update_playlist_process_queue(True, playlist_url, genre_name)
         except Exception as e:
             write_error(f"Failed to process playlist: {playlist_url} {genre_name}", e)
             update_playlist_process_queue(False, playlist_url, genre_name, error=e)
+        except KeyboardInterrupt as e:
+            print(traceback.format_exc())
+            print("Waiting for all threads to finish...")
+            for url, thread in threads.items():
+                thread.join()
+            break
+
 
 if __name__ == "__main__":
     main()
