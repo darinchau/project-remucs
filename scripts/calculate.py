@@ -369,9 +369,10 @@ def get_playlist_title_and_video(key: str) -> tuple[str, list[YouTubeURL]]:
     # Format error message
     too_many_requests = ("http" in str(e1).lower() and "429" in str(e1)) or ("http" in str(e2).lower() and "429" in str(e2))
     if too_many_requests:
+        print(f"Too many requests: {e1}; {e2}")
         for _ in trange(600, desc="Waiting 5 minutes before we try again..."):
             time.sleep(0.5)
-            return get_playlist_title_and_video(key)
+        return get_playlist_title_and_video(key)
 
     raise ValueError(f"Invalid channel or playlist: {key} (Playlist error: {e1}, Channel error: {e2})")
 
