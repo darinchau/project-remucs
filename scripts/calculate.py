@@ -531,6 +531,13 @@ def main():
         except Exception as e:
             write_error(f"Failed to process playlist: {playlist_url} {genre_name}", e)
             update_playlist_process_queue(False, playlist_url, genre_name, error=e)
+        except KeyboardInterrupt as e:
+            print(traceback.format_exc())
+            print("Waiting for all threads to finish...")
+            for url, thread in threads.items():
+                thread.join()
+            break
+
 
     # Phase 2: Calculate deferred URLs
     while True:
