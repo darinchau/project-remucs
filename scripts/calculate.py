@@ -70,6 +70,11 @@ NFFT = TARGET_FEATURES * 2 - 1
 BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
+## More dataset specifications
+MAX_SONG_LENGTH = 480
+MIN_SONG_LENGTH = 120
+MIN_VIEWS = 5e5
+
 
 def filter_song(yt: YouTubeURL) -> bool:
     """Returns True if the song should be processed, False otherwise."""
@@ -80,20 +85,13 @@ def filter_song(yt: YouTubeURL) -> bool:
     try:
         # Fix the unchecked type cast issue that might arise
         length = yt.get_length()
-        if length is None:
-            defer_video()
-            return False
 
-        if length >= 480 or length < 120:
+        # Defer to doing length check after downloading the video
+        if length is not None and (length >= MAX_SONG_LENGTH or length < MIN_SONG_LENGTH):
             return False
-
 
         views = yt.get_views()
-        if views is None:
-            defer_video()
-            return False
-
-        if views < 5e5:
+        if views is not None and views < MIN_VIEWS:
             return False
 
         if to_youtube(yt).age_restricted:
@@ -103,6 +101,18 @@ def filter_song(yt: YouTubeURL) -> bool:
     except Exception as e:
         write_error(f"Failed to filter song: {yt}", e)
         return False
+
+def clean_deferred_urls():
+    """Cleans up the deferred URLs by removing duplicates and empty lines."""
+    with open(DEFERRED_FILES_PATH, "r") as f:
+        deferred = f.readlines()
+
+    deferred = sorted(set([x.strip() for x in deferred]))
+    deferred = [x for x in deferred if len(x.strip()) > 0]
+
+    with open(DEFERRED_FILES_PATH, "w") as f:
+        f.write("\n".join(deferred))
+        f.write("\n")
 
 def clear_output():
     """Clears the output of the console."""
@@ -240,7 +250,13 @@ def download_audio(urls: list[YouTubeURL]):
         for future in as_completed(futures):
             url = futures[future]
             try:
+                print(f"Downloaded audio: {url}")
                 audio = future.result()
+                if audio is None:
+                    continue
+                if audio.duration >= MAX_SONG_LENGTH or audio.duration < MIN_SONG_LENGTH:
+                    write_reject_log(url, f"Song too long or too short ({audio.duration})")
+                    continue
                 yield audio, url
             except Exception as e:
                 write_error(f"Failed to download audio (skipping): {url}", e)
@@ -391,7 +407,6 @@ def get_playlist_video_urls(playlist_url: str):
     print(f"Number of processed URLs: {len(processed_urls)}")
 
     # Get all video url datas
-    urls: list[YouTubeURL] = []
     for video_url in tqdm(video_urls, desc="Getting URLs from playlist..."):
         if video_url not in processed_urls:
             yield video_url
@@ -460,6 +475,31 @@ def clean_playlist_queue():
         f.write("\n".join(playlist))
         f.write("\n")
 
+def get_next_deferred_url():
+    """Gets the next deferred URL to process. Returns None if there are no more URLs to process."""
+    processed_urls = get_processed_urls()
+    while True:
+        clean_deferred_urls()
+        try:
+            with open(DEFERRED_FILES_PATH, "r") as file:
+                lines = file.readlines()
+                if not lines:
+                    return
+
+        except FileNotFoundError:
+            return
+
+        if not lines:
+            return
+
+        print(f"Number of deferred URLs: {len(lines)}")
+
+        for line in lines:
+            url = get_url(line.split(" ")[0])
+            if url not in processed_urls:
+                yield url
+                processed_urls.add(url)
+
 def main():
     # Sanity check
     if not os.path.exists(PLAYLIST_QUEUE_PATH):
@@ -468,6 +508,10 @@ def main():
 
     clean_playlist_queue()
 
+    urls: list[YouTubeURL] = []
+    threads: dict[YouTubeURL, Thread] = {}
+
+    # Phase 1: Calculate the playlist urls
     while True:
         next_playlist = get_next_playlist_to_process()
         if not next_playlist:
@@ -475,20 +519,30 @@ def main():
             break
 
         playlist_url, genre_name = next_playlist
-        threads: dict[YouTubeURL, Thread] = {}
         try:
-            urls: list[YouTubeURL] = []
             for url in get_playlist_video_urls(playlist_url):
                 urls.append(url)
                 if len(urls) >= LIST_SPLIT_SIZE:
-                    calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
-                    urls.clear()
+                    calculate_url_list(urls[:LIST_SPLIT_SIZE], SongGenre(genre_name), threads, description=playlist_url)
+                    urls = urls[LIST_SPLIT_SIZE:]
             if urls:
                 calculate_url_list(urls, SongGenre(genre_name), threads, description=playlist_url)
             update_playlist_process_queue(True, playlist_url, genre_name)
         except Exception as e:
             write_error(f"Failed to process playlist: {playlist_url} {genre_name}", e)
             update_playlist_process_queue(False, playlist_url, genre_name, error=e)
+
+    # Phase 2: Calculate deferred URLs
+    while True:
+        for url in get_next_deferred_url():
+            urls.append(url)
+            if len(urls) >= LIST_SPLIT_SIZE:
+                try:
+                    calculate_url_list(urls[:LIST_SPLIT_SIZE], SongGenre.UNKNOWN, threads, description="Deferred URL")
+                    urls = urls[LIST_SPLIT_SIZE:]
+                except Exception as e:
+                    print(traceback.format_exc())
+                    write_error(f"Failed to process deferred URL: {url}", e)
 
 if __name__ == "__main__":
     main()
