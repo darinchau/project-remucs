@@ -88,13 +88,16 @@ def filter_song(yt: YouTubeURL) -> bool:
 
         # Defer to doing length check after downloading the video
         if length is not None and (length >= MAX_SONG_LENGTH or length < MIN_SONG_LENGTH):
+            write_reject_log(yt, f"Song too long or too short ({length})")
             return False
 
         views = yt.get_views()
         if views is not None and views < MIN_VIEWS:
+            write_reject_log(yt, f"Song has too few views ({views})")
             return False
 
         if to_youtube(yt).age_restricted:
+            write_reject_log(yt, "Song is age restricted")
             return False
 
         return True
@@ -138,8 +141,7 @@ def write_reject_log(url: YouTubeURL, reason: str):
     """Writes a rejected URL to a file."""
     if not os.path.exists(DATASET_PATH):
         os.makedirs(DATASET_PATH)
-    error_file = os.path.join(DATASET_PATH, "rejected_urls.txt")
-    with open(error_file, "a") as file:
+    with open(REJECTED_FILES_PATH, "a") as file:
         file.write(f"{url} {reason}\n")
 
 def cleanup_temp_dir():
@@ -250,13 +252,13 @@ def download_audio(urls: list[YouTubeURL]):
         for future in as_completed(futures):
             url = futures[future]
             try:
-                print(f"Downloaded audio: {url}")
                 audio = future.result()
                 if audio is None:
                     continue
                 if audio.duration >= MAX_SONG_LENGTH or audio.duration < MIN_SONG_LENGTH:
                     write_reject_log(url, f"Song too long or too short ({audio.duration})")
                     continue
+                print(f"Downloaded audio: {url}")
                 yield audio, url
             except Exception as e:
                 write_error(f"Failed to download audio (skipping): {url}", e)
@@ -301,8 +303,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
                 verbose=True)
             if isinstance(processed, str):
                 print(processed)
-                with open(REJECTED_FILES_PATH, "a") as file:
-                    file.write(f"{url} {processed}\n")
+                write_reject_log(url, processed)
                 continue
 
             entry, parts = processed
