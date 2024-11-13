@@ -33,7 +33,7 @@ except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
 # Path stuff
-DATASET_PATH = "./resources/dataset/audio-infos-v3"
+DATASET_PATH = "D:/Repository/project-remucs/audio-infos-v3"
 DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
 ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
@@ -130,7 +130,7 @@ def clear_output():
 
 def write_error(error: str, exec: Exception):
     """Writes an error to the error file."""
-    with open(ERROR_LOGS_PATH, "a") as file:
+    with open(ERROR_LOGS_PATH, "a", encoding="utf-8") as file:
         file.write(f"{error}: {exec}\n")
         file.write("".join(traceback.format_exception(exec)))
         file.write("=" * 80)
@@ -174,7 +174,11 @@ def get_processed_urls() -> set[YouTubeURL]:
         with open(REJECTED_FILES_PATH, "r") as file:
             lines = file.readlines()
             for line in lines:
-                url = get_url(line.split(" ")[0])
+                try:
+                    url = get_url(line.split(" ")[0])
+                except Exception as e:
+                    print(f"Failed to parse rejected URL: {line}")
+                    continue
                 processed_urls.add(url)
     return processed_urls
 
@@ -551,6 +555,12 @@ def main():
                 except Exception as e:
                     print(traceback.format_exc())
                     write_error(f"Failed to process deferred URL: {url}", e)
+        if urls:
+            try:
+                calculate_url_list(urls, SongGenre.UNKNOWN, threads, description="Deferred URL")
+            except Exception as e:
+                print(traceback.format_exc())
+                write_error(f"Failed to process deferred URL: {url}", e)
 
 if __name__ == "__main__":
     main()
