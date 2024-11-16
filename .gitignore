@@ -76,3 +76,7 @@ nohup.out
 *.ipynb
 
 scripts/playlist_queue.txt
+!/resources/ckpts
+!/resources/ckpts/*
+!/resources/config
+!/resources/config/*

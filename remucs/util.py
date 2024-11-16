@@ -182,6 +182,15 @@ class SpectrogramCollection:
         data = self.get_spectrogram(part_id, bar_number)
         if data is None:
             return
+        return self.spectrogram_to_audio(nframes, data)
+
+    def spectrogram_to_audio(self, nframes: int | None, data: Tensor) -> Audio:
+        """Convert a spectrogram to an audio.
+
+        Input:
+        - nframes: The number of frames to truncate the audio to. If None, the audio will not be truncated.
+        - data: The spectrogram tensor. Must have shape (2, target_height, target_width) and dtype torch.float32.
+        """
         data = torch.pow(data, 1/self.power)
         data = data * self.max_value
         data = data.transpose(1, 2).numpy()
