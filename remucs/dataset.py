@@ -38,10 +38,10 @@ class SpectrogramDataset(Dataset):
             return path, bar
 
         if num_workers == 0:
-            collection = [load(os.path.join(dataset_dir, x)) for x in tqdm(os.listdir(dataset_dir))]
+            collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(os.listdir(dataset_dir))]
         else:
-            collection: list[str, list[int]] = p_umap(load, [os.path.join(dataset_dir, x) for x in os.listdir(dataset_dir)], num_cpus=num_workers)
-        collection = [x for x in collection if x]
+            collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in os.listdir(dataset_dir)], num_cpus=num_workers)
+        collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
         self.path_bar = []
         for path, bars in collection:
             for bar in bars:
@@ -58,11 +58,12 @@ class SpectrogramDataset(Dataset):
         for part in "VDIB":
             # Spectrogram is in CHW format
             # Where H is the time axis. Need concat along time
+            assert part in ("V", "D", "I", "B") # To pass the typechecker
             specs = [s.get_spectrogram(part, i) for i in range(bar, bar + self.nbars)]
             if not all(specs):
                 # TODO: Handle this more gracefully
                 raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
-            data = torch.cat(specs, dim=1)
+            data = torch.cat(specs, dim=1) # type: ignore
             tensors.append(data)
         data = torch.stack(tensors)
         # Return shape: 4, 2, H, W (should be 512, 512)
