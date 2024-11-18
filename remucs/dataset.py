@@ -14,8 +14,12 @@ class SpectrogramDataset(Dataset):
     The dataset is created from dataset_dir which should be a folder containing .spec files.
 
     The metadata inside the .spec files is used to determine the number of bars in the file.
-    It is read in parallel unless num_workers is set to 0."""
-    def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4):
+    It is read in parallel unless num_workers is set to 0.
+
+    load_first_n can be set to load only n files. If set to -1, all files are loaded.
+
+    This implicitly assumes (512, 512) resolution and VDIB parts."""
+    def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1):
         def load(path: str):
             # Reading the whole thing is slow D: so let's only read the metadata
             with zipfile.ZipFile(path, 'r') as zip_ref:
@@ -37,10 +41,13 @@ class SpectrogramDataset(Dataset):
                 return None
             return path, bar
 
+        files = sorted(os.listdir(dataset_dir))
+        if load_first_n >= 0:
+            files = files[:load_first_n]
         if num_workers == 0:
-            collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(os.listdir(dataset_dir))]
+            collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files)]
         else:
-            collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in os.listdir(dataset_dir)], num_cpus=num_workers)
+            collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in files], num_cpus=num_workers)
         collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
         self.path_bar = []
         for path, bars in collection:
@@ -60,10 +67,12 @@ class SpectrogramDataset(Dataset):
             # Where H is the time axis. Need concat along time
             assert part in ("V", "D", "I", "B") # To pass the typechecker
             specs = [s.get_spectrogram(part, i) for i in range(bar, bar + self.nbars)]
-            if not all(specs):
+            if not all(spec is not None for spec in specs):
                 # TODO: Handle this more gracefully
                 raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
-            data = torch.cat(specs, dim=1) # type: ignore
+            if not all(spec.shape == (2, 128, 512) for spec in specs):
+                raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
+            data = torch.cat(specs, dim=1)
             tensors.append(data)
         data = torch.stack(tensors)
         # Return shape: 4, 2, H, W (should be 512, 512)
