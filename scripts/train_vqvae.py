@@ -79,8 +79,16 @@ def train(config_path: str):
     # Create the model and dataset #
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
 
+    # Print the model parameters and bail
+    # print(model)
+    # numel = 0
+    # for p in model.parameters():
+    #     numel += p.numel()
+    # print('Total number of parameters: {}'.format(numel))
+    # exit(0)
+
     # Create the dataset
-    im_dataset = SpectrogramDataset(dataset_config['dataset_dir'], nbars=dataset_config['nbars'])
+    im_dataset = SpectrogramDataset(dataset_config['dataset_dir'], nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
 
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
@@ -197,6 +205,8 @@ def train(config_path: str):
             if step_count % acc_steps == 0:
                 optimizer_g.step()
                 optimizer_g.zero_grad()
+
+        # End of epoch. Clean up the gradients and losses and save the model
         optimizer_d.step()
         optimizer_d.zero_grad()
         optimizer_g.step()

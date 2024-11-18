@@ -38,7 +38,7 @@ class SpectrogramCollection:
     def parse_spectrogram_id(fn: str) -> tuple[PartIDType, int, float, float]:
         """Unpack a unique ID that represents the spectrogram of a bar."""
         part_id = fn[0]
-        assert part_id in ("V", "D", "I", "B", "N")
+        assert part_id in ("V", "D", "I", "B", "N"), f"Invalid part ID {part_id}"
         bar_number = int(fn[1:-11])
         x = fn[-11:] + "A"
         b = base64.urlsafe_b64decode(x)
