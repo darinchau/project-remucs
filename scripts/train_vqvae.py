@@ -1,5 +1,6 @@
 # This script is used to train the VQ-VAE model with a discriminator for adversarial loss
 # Use the config file in resources/config/vqvae.yaml to set the parameters for training
+# Adapted from https://github.com/explainingai-code/StableDiffusion-PyTorch/blob/main/tools/train_vqvae.py
 import yaml
 import argparse
 import torch
@@ -113,7 +114,6 @@ def train(config_path: str):
     for epoch_idx in range(num_epochs):
         recon_losses = []
         codebook_losses = []
-        #commitment_losses = []
         perceptual_losses = []
         disc_losses = []
         gen_losses = []
@@ -155,6 +155,7 @@ def train(config_path: str):
                       (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
                       (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps))
             codebook_losses.append(train_config['codebook_weight'] * quantize_losses['codebook_loss'].item())
+
             # Adversarial loss only if disc_step_start steps passed
             if step_count > disc_step_start:
                 disc_fake_pred = discriminator(model_output[0])
@@ -163,9 +164,12 @@ def train(config_path: str):
                                                            device=disc_fake_pred.device))
                 gen_losses.append(train_config['disc_weight'] * disc_fake_loss.item())
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
+
+            # Perceptual Loss
             lpips_loss = torch.mean(perceptual_loss(output, im)) / acc_steps
             perceptual_losses.append(train_config['perceptual_weight'] * lpips_loss.item())
             g_loss += train_config['perceptual_weight']*lpips_loss / acc_steps
+
             losses.append(g_loss.item())
             g_loss.backward()
             #####################################

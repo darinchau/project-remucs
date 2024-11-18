@@ -80,3 +80,4 @@ scripts/playlist_queue.txt
 !/resources/ckpts/*
 !/resources/config
 !/resources/config/*
+!cleanup.ipynb
