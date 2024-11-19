@@ -20,6 +20,7 @@ from .calculate import (
     DatasetEntryEncoder,
     clear_output,
     DATAFILE_PATH,
+    REJECTED_SPECTROGRAMS_PATH,
     SPECTROGRAM_SAVE_PATH,
     BEAT_MODEL_PATH,
     clear_cuda,
@@ -100,8 +101,23 @@ def calculate_url_list(urls: list[YouTubeURL], demucs: DemucsAudioSeparator, thr
     cleanup_temp_dir()
 
 def main():
-    urls = [get_url(x[:11]) for x in os.listdir(DATAFILE_PATH)]
-    demucs = DemucsAudioSeparator()
+    # Get all urls
+    urls: list[YouTubeURL] = []
+    rejected = set()
+    with open(REJECTED_SPECTROGRAMS_PATH, "r") as f:
+        for line in f:
+            rejected.add(YouTubeURL(line.strip()))
+    for x in os.listdir(DATAFILE_PATH):
+        if f"{x[:11]}.spec.zip" in os.listdir(SPECTROGRAM_SAVE_PATH):
+            continue
+        if get_url(x) in rejected:
+            continue
+        urls.append(get_url(x))
+
+    print(f"Number of URLs: {len(urls)}")
+
+    # Start calculating
+    demucs = DemucsAudioSeparator(compile=True)
     threads = {}
     while urls:
         try:

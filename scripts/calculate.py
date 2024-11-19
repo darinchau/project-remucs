@@ -38,6 +38,7 @@ DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
 ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
 DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
+REJECTED_SPECTROGRAMS_PATH = os.path.join(DATASET_PATH, "rejected_spectrograms.txt")
 PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
 SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
 LIST_SPLIT_SIZE = 300
@@ -239,6 +240,9 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
 
     if len(specs.spectrograms) > 0:
         specs.save(save_path)
+    else:
+        with open(REJECTED_SPECTROGRAMS_PATH, "a") as file:
+            file.write(f"{url}\n")
 
     return specs
 
