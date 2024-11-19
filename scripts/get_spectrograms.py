@@ -117,7 +117,7 @@ def main():
     print(f"Number of URLs: {len(urls)}")
 
     # Start calculating
-    demucs = DemucsAudioSeparator(compile=True)
+    demucs = DemucsAudioSeparator(compile=False)
     threads = {}
     while urls:
         try:
