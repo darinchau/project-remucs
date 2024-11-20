@@ -71,7 +71,7 @@ def calculate_url_list(urls: list[YouTubeURL], demucs: DemucsAudioSeparator, thr
 
             print("Analyzing beats...")
             br = analyse_beat_transformer(audio, parts, model_path=BEAT_MODEL_PATH)
-            error = verify_beats_result(br, audio.duration, url)
+            error = verify_beats_result(br, audio.duration, url, reject_weird_meter=False)
             if error:
                 with open(REJECTED_SPECTROGRAMS_PATH, "a") as f:
                     f.write(f"{url}\n")
