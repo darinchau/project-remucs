@@ -8,6 +8,7 @@ import datetime
 from math import isclose
 from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, analyse_beat_transformer
+from AutoMasher.fyp.audio.dataset.create import verify_beats_result, verify_parts_result
 from AutoMasher.fyp.util import (
     YouTubeURL,
     get_url
@@ -61,9 +62,21 @@ def calculate_url_list(urls: list[YouTubeURL], demucs: DemucsAudioSeparator, thr
         try:
             print("Separating audio...")
             parts = demucs.separate(audio)
+            error = verify_parts_result(parts, mean_vocal_threshold=0.1)
+            if error:
+                with open(REJECTED_SPECTROGRAMS_PATH, "a") as f:
+                    f.write(f"{url}\n")
+                print(f"Failed to separate audio: {url}: {error}")
+                continue
 
             print("Analyzing beats...")
             br = analyse_beat_transformer(audio, parts, model_path=BEAT_MODEL_PATH)
+            error = verify_beats_result(br, audio.duration, url)
+            if error:
+                with open(REJECTED_SPECTROGRAMS_PATH, "a") as f:
+                    f.write(f"{url}\n")
+                print(f"Failed to analyze beats: {url}: {error}")
+                continue
 
             # Save the spectrogram features
             print("Processing spectrogram features...")
