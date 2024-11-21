@@ -24,6 +24,7 @@ from .calculate import (
     REJECTED_SPECTROGRAMS_PATH,
     SPECTROGRAM_SAVE_PATH,
     BEAT_MODEL_PATH,
+    AUDIO_SAVE_PATH,
     clear_cuda,
     write_error,
     cleanup_temp_dir
@@ -81,7 +82,7 @@ def calculate_url_list(urls: list[YouTubeURL], demucs: DemucsAudioSeparator, thr
             # Save the spectrogram features
             print("Processing spectrogram features...")
 
-            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br))
+            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br), kwargs={"save_audio": True})
             thread.start()
             threads[url] = thread
 
