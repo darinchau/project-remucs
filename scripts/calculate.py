@@ -38,8 +38,10 @@ DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
 ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
 DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
+REJECTED_SPECTROGRAMS_PATH = os.path.join(DATASET_PATH, "rejected_spectrograms.txt")
 PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
 SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
+AUDIO_SAVE_PATH = os.path.join(DATASET_PATH, "audio")
 LIST_SPLIT_SIZE = 300
 
 # Create the directories if they don't exist
@@ -51,6 +53,9 @@ if not os.path.exists(DATAFILE_PATH):
 
 if not os.path.exists(SPECTROGRAM_SAVE_PATH):
     os.makedirs(SPECTROGRAM_SAVE_PATH)
+
+if not os.path.exists(AUDIO_SAVE_PATH):
+    os.makedirs(AUDIO_SAVE_PATH)
 
 # Config for the spectrogram part of the data collection
 # The math works out such that if we make the hop length 512, BPM 120
@@ -130,12 +135,16 @@ def clear_output():
 
 def write_error(error: str, exec: Exception):
     """Writes an error to the error file."""
-    with open(ERROR_LOGS_PATH, "a", encoding="utf-8") as file:
-        file.write(f"{error}: {exec}\n")
-        file.write("".join(traceback.format_exception(exec)))
-        file.write("=" * 80)
-        file.write("\n\n")
-        print("ERROR: " + error)
+    try:
+        with open(ERROR_LOGS_PATH, "a", encoding="utf-8") as file:
+            file.write(f"{error}: {exec}\n")
+            file.write("".join(traceback.format_exception(exec)))
+            file.write("=" * 80)
+            file.write("\n\n")
+            print("ERROR: " + error)
+    except Exception as e:
+        print(f"Error: {error} {exec}")
+        print("".join(traceback.format_exception(exec)))
 
 def write_reject_log(url: YouTubeURL, reason: str):
     """Writes a rejected URL to a file."""
@@ -183,7 +192,7 @@ def get_processed_urls() -> set[YouTubeURL]:
     return processed_urls
 
 def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection, br: BeatAnalysisResult, *,
-                                 format: str = "png", save_path: str | None = None) -> SpectrogramCollection:
+                                 format: str = "png", save_path: str | None = None, save_audio: bool = False) -> SpectrogramCollection:
     """Processes the spectrogram features of the audio and saves it to the save path.
     Assumes the default save path - the option is mainly for debug purposes only."""
     # Sanity check
@@ -239,6 +248,14 @@ def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCol
 
     if len(specs.spectrograms) > 0:
         specs.save(save_path)
+        if save_audio:
+            try:
+                audio.save(os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3"))
+            except Exception as e:
+                write_error(f"Failed to save audio: {url}", e)
+    else:
+        with open(REJECTED_SPECTROGRAMS_PATH, "a") as file:
+            file.write(f"{url}\n")
 
     return specs
 
@@ -316,7 +333,7 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
             print("Processing spectrogram features...")
 
             br = BeatAnalysisResult.from_data_entry(entry)
-            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br))
+            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br), kwargs={"save_audio": True})
             thread.start()
             threads[url] = thread
 

@@ -182,9 +182,9 @@ class SpectrogramCollection:
         data = self.get_spectrogram(part_id, bar_number)
         if data is None:
             return
-        return self.spectrogram_to_audio(nframes, data)
+        return self.spectrogram_to_audio(data, nframes)
 
-    def spectrogram_to_audio(self, nframes: int | None, data: Tensor) -> Audio:
+    def spectrogram_to_audio(self, data: Tensor, nframes: int | None = None) -> Audio:
         """Convert a spectrogram to an audio.
 
         Input:
