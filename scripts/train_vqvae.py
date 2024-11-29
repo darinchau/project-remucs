@@ -80,11 +80,11 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
 
     # Print the model parameters and bail
-    # print(model)
-    # numel = 0
-    # for p in model.parameters():
-    #     numel += p.numel()
-    # print('Total number of parameters: {}'.format(numel))
+    print(model)
+    numel = 0
+    for p in model.parameters():
+        numel += p.numel()
+    print('Total number of parameters: {}'.format(numel))
     # exit(0)
 
     # Create the dataset

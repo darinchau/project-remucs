@@ -131,8 +131,9 @@ class ScalingLayer(nn.Module):
         # Imagnet normalization for (0-1)
         # mean = [0.485, 0.456, 0.406]
         # std = [0.229, 0.224, 0.225]
-        self.register_buffer('shift', torch.Tensor([-.030, -.088, -.188])[None, :, None, None])
-        self.register_buffer('scale', torch.Tensor([.458, .448, .450])[None, :, None, None])
+        # Temp fix, TODO update values here
+        self.register_buffer('shift', torch.Tensor([-.030, -.088, -.188, -.123])[None, :, None, None])
+        self.register_buffer('scale', torch.Tensor([.458, .448, .450, .456])[None, :, None, None])
 
     def forward(self, inp):
         return (inp - self.shift) / self.scale
