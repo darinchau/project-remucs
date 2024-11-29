@@ -96,7 +96,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
 
     # Create output directories
     if not os.path.exists(base_dir):
-        os.mkdir(base_dir)
+        os.makedirs(base_dir)
 
     num_epochs = train_config['epochs']
 
