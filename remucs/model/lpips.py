@@ -109,8 +109,8 @@ class LPIPS(nn.Module):
         for idx in [(0, 1, 2), (3, 0, 1), (2, 3, 0), (1, 2, 3)]:
             in0 = x0[:, idx]
             in1 = x1[:, idx]
-            means = self.mean[idx][None, :, None, None]
-            stds = self.std[idx][None, :, None, None]
+            means = self.mean[torch.tensor(idx)][None, :, None, None]
+            stds = self.std[torch.tensor(idx)][None, :, None, None]
             in0 = (in0 - means) / stds
             in1 = (in1 - means) / stds
             d = self.forward_single(in0, in1)
