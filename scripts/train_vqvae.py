@@ -13,6 +13,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
+import wandb
 from remucs.model import VQVAE, VQVAEConfig
 from remucs.model.lpips import LPIPS
 from remucs.dataset import SpectrogramDataset
@@ -122,6 +123,12 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
     image_save_steps = train_config['autoencoder_img_save_steps']
     img_save_count = 0
 
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="vqvae_training",
+        config=config
+    )
+
     for epoch_idx in range(num_epochs):
         recon_losses = []
         codebook_losses = []
@@ -211,6 +218,15 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
                 optimizer_g.step()
                 optimizer_g.zero_grad()
 
+            # Log losses
+            wandb.log({
+                "Reconstruction Loss": recon_loss[-1],
+                "Perceptual Loss": perceptual_losses[-1],
+                "Codebook Loss": codebook_losses[-1],
+                "Generator Loss": gen_losses[-1],
+                "Discriminator Loss": disc_losses[-1] if disc_losses else 0
+            }, step=step_count)
+
         # End of epoch. Clean up the gradients and losses and save the model
         optimizer_d.step()
         optimizer_d.zero_grad()
@@ -235,6 +251,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
 
         torch.save(model.state_dict(), os.path.join(base_dir, train_config['vqvae_autoencoder_ckpt_name']))
         torch.save(discriminator.state_dict(), os.path.join(base_dir, train_config['vqvae_discriminator_ckpt_name']))
+
+    wandb.finish()
     print('Done Training...')
 
 
