@@ -239,6 +239,4 @@ if __name__ == '__main__':
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
     parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/ckpts/vqvae')
     args = parser.parse_args()
-    config_path = args.config_path
-    base_dir = args.base_dir
-    train(config_path, base_dir)
+    train(args.config_path, args.base_dir, args.dataset_dir)
