@@ -134,6 +134,9 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
             step_count += 1
             im = im.float().to(device)
 
+            # im is (4, 4, 2, 512, 512) -> take only the magnitude
+            im = im [:, :, 0]
+
             # Fetch autoencoders output(reconstructions)
             model_output = model(im)
             output, z, quantize_losses = model_output
@@ -149,8 +152,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
                 img = torchvision.transforms.ToPILImage()(grid)
                 if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
                     os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
-                img.save(os.path.join(base_dir,'vqvae_autoencoder_samples',
-                                      'current_autoencoder_sample_{}.png'.format(img_save_count)))
+                img.save(os.path.join(base_dir,'vqvae_autoencoder_samples', 'current_autoencoder_sample_{}.png'.format(img_save_count)))
                 img_save_count += 1
                 img.close()
 
