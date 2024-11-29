@@ -105,7 +105,7 @@ class LPIPS(nn.Module):
 
         # A quick hacky way to get around the VGG network requirements of having 3 channels
         # Do the input LPIPS 4 times to match the 4 channels of the input
-        out = torch.tensor(0.0).to(device)
+        out = None
         for idx in [(0, 1, 2), (3, 0, 1), (2, 3, 0), (1, 2, 3)]:
             in0 = x0[:, idx]
             in1 = x1[:, idx]
@@ -114,7 +114,11 @@ class LPIPS(nn.Module):
             in0 = (in0 - means) / stds
             in1 = (in1 - means) / stds
             d = self.forward_single(in0, in1)
-            out += d
+
+            if out is None:
+                out = d
+            else:
+                out += d
 
         return out / 4
 
