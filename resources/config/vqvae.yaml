@@ -22,7 +22,6 @@ autoencoder_params:
 
 train_params:
   seed : 1943
-  ckpt_base_dir: 'resources/train/ckpts'
   autoencoder_batch_size: 4
   disc_start: 15000     # Start training discriminator after this many steps
   disc_weight: 0.5      # Weight of discriminator loss

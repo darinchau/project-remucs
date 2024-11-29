@@ -10,7 +10,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
-from torch.optim import Adam
+from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
 from remucs.model import VQVAE, VQVAEConfig
@@ -65,7 +65,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str):
+def train(config_path: str, base_dir: str):
     # Read the config file
     config = read_config(config_path)
 
@@ -95,8 +95,8 @@ def train(config_path: str):
                              shuffle=True)
 
     # Create output directories
-    if not os.path.exists(train_config['ckpt_base_dir']):
-        os.mkdir(train_config['ckpt_base_dir'])
+    if not os.path.exists(base_dir):
+        os.mkdir(base_dir)
 
     num_epochs = train_config['epochs']
 
@@ -147,9 +147,9 @@ def train(config_path: str):
 
                 grid = make_grid(torch.cat([save_input, save_output], dim=0), nrow=sample_size)
                 img = torchvision.transforms.ToPILImage()(grid)
-                if not os.path.exists(os.path.join(train_config['ckpt_base_dir'],'vqvae_autoencoder_samples')):
-                    os.mkdir(os.path.join(train_config['ckpt_base_dir'], 'vqvae_autoencoder_samples'))
-                img.save(os.path.join(train_config['ckpt_base_dir'],'vqvae_autoencoder_samples',
+                if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
+                    os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
+                img.save(os.path.join(base_dir,'vqvae_autoencoder_samples',
                                       'current_autoencoder_sample_{}.png'.format(img_save_count)))
                 img_save_count += 1
                 img.close()
@@ -228,10 +228,8 @@ def train(config_path: str):
                          np.mean(perceptual_losses),
                          np.mean(codebook_losses)))
 
-        torch.save(model.state_dict(), os.path.join(train_config['ckpt_base_dir'],
-                                                    train_config['vqvae_autoencoder_ckpt_name']))
-        torch.save(discriminator.state_dict(), os.path.join(train_config['ckpt_base_dir'],
-                                                            train_config['vqvae_discriminator_ckpt_name']))
+        torch.save(model.state_dict(), os.path.join(base_dir, train_config['vqvae_autoencoder_ckpt_name']))
+        torch.save(discriminator.state_dict(), os.path.join(base_dir, train_config['vqvae_discriminator_ckpt_name']))
     print('Done Training...')
 
 
@@ -239,6 +237,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
     parser.add_argument('--config', dest='config_path',
                         default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources')
     args = parser.parse_args()
     config_path = args.config_path
-    train(config_path)
+    base_dir = args.base_dir
+    train(config_path, base_dir)
