@@ -51,7 +51,7 @@ def calculate_url_list(urls: list[YouTubeURL], description: str = ""):
         print()
         print(linesep * os.get_terminal_size().columns)
         print(f"Current time: {datetime.datetime.now()}")
-        print(f"Current number of spectrograms: {len(os.listdir(SPECTROGRAM_SAVE_PATH))} {i}/{len(urls)} for current list.")
+        print(f"Current number of audios: {len(os.listdir(AUDIO_SAVE_PATH))} {i}/{len(urls)} for current list.")
         print(description)
         print(f"Last entry process time: {last_entry_process_time} seconds")
         print(f"Current entry: {url}")
