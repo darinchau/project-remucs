@@ -220,7 +220,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
 
             # Log losses
             wandb.log({
-                "Reconstruction Loss": recon_loss[-1],
+                "Reconstruction Loss": recon_losses[-1],
                 "Perceptual Loss": perceptual_losses[-1],
                 "Codebook Loss": codebook_losses[-1],
                 "Generator Loss": gen_losses[-1],
