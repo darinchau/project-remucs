@@ -1,7 +1,6 @@
 # Config file for autoencoder training
 
 dataset_params:
-  dataset_dir: 'resources/data' # Path to dataset passed into SpectrogramDataset
   nbars: 4
   im_channels : 4
   im_size : 512

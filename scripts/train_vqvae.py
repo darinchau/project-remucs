@@ -65,7 +65,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str):
+def train(config_path: str, base_dir: str, dataset_dir: str):
     # Read the config file
     config = read_config(config_path)
 
@@ -88,7 +88,7 @@ def train(config_path: str, base_dir: str):
     # exit(0)
 
     # Create the dataset
-    im_dataset = SpectrogramDataset(dataset_config['dataset_dir'], nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
+    im_dataset = SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
 
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
@@ -235,8 +235,8 @@ def train(config_path: str, base_dir: str):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--config', dest='config_path',
-                        default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--dataset_dir', dest='dataset_dir', type=str, default='resources/dataset')
+    parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
     parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/ckpts/vqvae')
     args = parser.parse_args()
     config_path = args.config_path
