@@ -67,11 +67,8 @@ class LPIPS(nn.Module):
 
        returns:
        - d: (N, ) Tensor of distances between the image pairs"""
-    def __init__(self, use_dropout=True):
+    def __init__(self, means: list[float], stds: list[float], use_dropout=True):
         super(LPIPS, self).__init__()
-
-        # Imagenet normalization
-        self.scaling_layer = ScalingLayer()
 
         # Instantiate vgg model
         self.chns = [64, 128, 256, 512, 512]
@@ -96,23 +93,40 @@ class LPIPS(nn.Module):
         for param in self.parameters():
             param.requires_grad = False
 
-    def forward(self, in0, in1, normalize=False):
+        self.register_buffer('mean', torch.tensor(means))
+        self.register_buffer('std', torch.tensor(stds))
+
+    def forward(self, x0, x1, normalize=False):
         # Scale the inputs to -1 to +1 range if needed
-        if normalize:  # turn on this flag if input is [0,1] so it can be adjusted to [-1, +1]
-            in0 = 2 * in0 - 1
-            in1 = 2 * in1 - 1
+        # turn on this flag if input is [0,1] so it can be adjusted to [-1, +1]
+        if normalize:
+            x0 = 2 * x0 - 1
+            x1 = 2 * x1 - 1
 
-        # Normalize the inputs according to imagenet normalization
-        in0_input, in1_input = self.scaling_layer(in0), self.scaling_layer(in1)
+        # A quick hacky way to get around the VGG network requirements of having 3 channels
+        # Do the input LPIPS 4 times to match the 4 channels of the input
+        out = torch.tensor(0.0).to(device)
+        for idx in [(0, 1, 2), (3, 0, 1), (2, 3, 0), (1, 2, 3)]:
+            in0 = x0[:, idx]
+            in1 = x1[:, idx]
+            means = self.mean[idx][None, :, None, None]
+            stds = self.std[idx][None, :, None, None]
+            in0 = (in0 - means) / stds
+            in1 = (in1 - means) / stds
+            d = self.forward_single(in0, in1)
+            out += d
 
+        return out / 4
+
+    def forward_single(self, in0, in1):
         # Get VGG outputs for image0 and image1
-        outs0, outs1 = self.net.forward(in0_input), self.net.forward(in1_input)
+        outs0 = self.net.forward(in0)
+        outs1 = self.net.forward(in1)
         feats0, feats1, diffs = {}, {}, {}
 
         # Compute Square of Difference for each layer output
         for kk in range(self.L):
-            feats0[kk], feats1[kk] = torch.nn.functional.normalize(outs0[kk], dim=1), torch.nn.functional.normalize(
-                outs1[kk])
+            feats0[kk], feats1[kk] = torch.nn.functional.normalize(outs0[kk], dim=1), torch.nn.functional.normalize(outs1[kk])
             diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
 
         # 1x1 convolution followed by spatial average on the square differences
@@ -122,21 +136,8 @@ class LPIPS(nn.Module):
         # Aggregate the results of each layer
         for l in range(self.L):
             val += res[l]
+
         return val
-
-
-class ScalingLayer(nn.Module):
-    def __init__(self):
-        super(ScalingLayer, self).__init__()
-        # Imagnet normalization for (0-1)
-        # mean = [0.485, 0.456, 0.406]
-        # std = [0.229, 0.224, 0.225]
-        # Temp fix, TODO update values here
-        self.register_buffer('shift', torch.Tensor([-.030, -.088, -.188, -.123])[None, :, None, None])
-        self.register_buffer('scale', torch.Tensor([.458, .448, .450, .456])[None, :, None, None])
-
-    def forward(self, inp):
-        return (inp - self.shift) / self.scale
 
 class NetLinLayer(nn.Module):
     ''' A single linear layer which does a 1x1 conv '''
