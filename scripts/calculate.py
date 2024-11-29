@@ -316,6 +316,8 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
         clear_cuda()
 
         try:
+            audio.save(os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3"))
+
             processed = process_audio_features(audio, url, genre,
                 chord_model_path=CHORD_MODEL_PATH,
                 beat_model_path=BEAT_MODEL_PATH,
