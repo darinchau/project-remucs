@@ -223,7 +223,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
                 "Reconstruction Loss": recon_losses[-1],
                 "Perceptual Loss": perceptual_losses[-1],
                 "Codebook Loss": codebook_losses[-1],
-                "Generator Loss": gen_losses[-1],
+                "Generator Loss": gen_losses[-1] if gen_losses else 0,
                 "Discriminator Loss": disc_losses[-1] if disc_losses else 0
             }, step=step_count)
 
