@@ -10,9 +10,10 @@ import os
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data.dataloader import DataLoader
-from torch.optim import Adam
+from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
+import wandb
 from remucs.model import VQVAE, VQVAEConfig
 from remucs.model.lpips import LPIPS
 from remucs.dataset import SpectrogramDataset
@@ -65,7 +66,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str):
+def train(config_path: str, base_dir: str, dataset_dir: str):
     # Read the config file
     config = read_config(config_path)
 
@@ -80,30 +81,33 @@ def train(config_path: str):
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
 
     # Print the model parameters and bail
-    # print(model)
-    # numel = 0
-    # for p in model.parameters():
-    #     numel += p.numel()
-    # print('Total number of parameters: {}'.format(numel))
+    print(model)
+    numel = 0
+    for p in model.parameters():
+        numel += p.numel()
+    print('Total number of parameters: {}'.format(numel))
     # exit(0)
 
     # Create the dataset
-    im_dataset = SpectrogramDataset(dataset_config['dataset_dir'], nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
+    im_dataset = SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
 
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
                              shuffle=True)
 
     # Create output directories
-    if not os.path.exists(train_config['ckpt_base_dir']):
-        os.mkdir(train_config['ckpt_base_dir'])
+    if not os.path.exists(base_dir):
+        os.makedirs(base_dir)
 
     num_epochs = train_config['epochs']
 
     # TODO: Can try BCE with logits loss for discriminator???
     reconstruction_loss = torch.nn.MSELoss()
     discriminator_loss = torch.nn.MSELoss()
-    perceptual_loss = LPIPS().eval().to(device)
+    perceptual_loss = LPIPS(
+        means = [0.1920, 0.1791, 0.1698, 0.0812],
+        stds = [0.1177, 0.1080, 0.1079, 0.0675]
+    ).eval().to(device)
 
     discriminator = Discriminator(im_channels=dataset_config['im_channels']).to(device)
 
@@ -118,6 +122,12 @@ def train(config_path: str):
     acc_steps = train_config['autoencoder_acc_steps']
     image_save_steps = train_config['autoencoder_img_save_steps']
     img_save_count = 0
+
+    wandb.init(
+        # set the wandb project where this run will be logged
+        project="vqvae_training",
+        config=config
+    )
 
     for epoch_idx in range(num_epochs):
         recon_losses = []
@@ -134,6 +144,9 @@ def train(config_path: str):
             step_count += 1
             im = im.float().to(device)
 
+            # im is (4, 4, 2, 512, 512) -> take only the magnitude
+            im = im [:, :, 0]
+
             # Fetch autoencoders output(reconstructions)
             model_output = model(im)
             output, z, quantize_losses = model_output
@@ -147,10 +160,9 @@ def train(config_path: str):
 
                 grid = make_grid(torch.cat([save_input, save_output], dim=0), nrow=sample_size)
                 img = torchvision.transforms.ToPILImage()(grid)
-                if not os.path.exists(os.path.join(train_config['ckpt_base_dir'],'vqvae_autoencoder_samples')):
-                    os.mkdir(os.path.join(train_config['ckpt_base_dir'], 'vqvae_autoencoder_samples'))
-                img.save(os.path.join(train_config['ckpt_base_dir'],'vqvae_autoencoder_samples',
-                                      'current_autoencoder_sample_{}.png'.format(img_save_count)))
+                if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
+                    os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
+                img.save(os.path.join(base_dir,'vqvae_autoencoder_samples', 'current_autoencoder_sample_{}.png'.format(img_save_count)))
                 img_save_count += 1
                 img.close()
 
@@ -206,6 +218,15 @@ def train(config_path: str):
                 optimizer_g.step()
                 optimizer_g.zero_grad()
 
+            # Log losses
+            wandb.log({
+                "Reconstruction Loss": recon_losses[-1],
+                "Perceptual Loss": perceptual_losses[-1],
+                "Codebook Loss": codebook_losses[-1],
+                "Generator Loss": gen_losses[-1] if gen_losses else 0,
+                "Discriminator Loss": disc_losses[-1] if disc_losses else 0
+            }, step=step_count)
+
         # End of epoch. Clean up the gradients and losses and save the model
         optimizer_d.step()
         optimizer_d.zero_grad()
@@ -228,17 +249,17 @@ def train(config_path: str):
                          np.mean(perceptual_losses),
                          np.mean(codebook_losses)))
 
-        torch.save(model.state_dict(), os.path.join(train_config['ckpt_base_dir'],
-                                                    train_config['vqvae_autoencoder_ckpt_name']))
-        torch.save(discriminator.state_dict(), os.path.join(train_config['ckpt_base_dir'],
-                                                            train_config['vqvae_discriminator_ckpt_name']))
+        torch.save(model.state_dict(), os.path.join(base_dir, train_config['vqvae_autoencoder_ckpt_name']))
+        torch.save(discriminator.state_dict(), os.path.join(base_dir, train_config['vqvae_discriminator_ckpt_name']))
+
+    wandb.finish()
     print('Done Training...')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--config', dest='config_path',
-                        default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--dataset_dir', dest='dataset_dir', type=str, default='resources/dataset')
+    parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/ckpts/vqvae')
     args = parser.parse_args()
-    config_path = args.config_path
-    train(config_path)
+    train(args.config_path, args.base_dir, args.dataset_dir)
