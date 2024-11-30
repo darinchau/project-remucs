@@ -28,7 +28,6 @@ from .calculate import (
     clear_cuda,
     write_error,
     cleanup_temp_dir,
-    get_processed_urls
 )
 
 BATCH_SIZE = 300
@@ -69,20 +68,24 @@ def calculate_url_list(urls: list[YouTubeURL], description: str = ""):
     cleanup_temp_dir()
 
 def get_audios_to_process():
-    urls = get_processed_urls()
+    processed_urls: set[YouTubeURL] = set()
+    suffix = ".dat3"
+    for file in os.listdir(DATAFILE_PATH):
+        if file.endswith(suffix) and len(file) == len(suffix) + 11:
+            url = get_url(file[:-len(suffix)])
+            processed_urls.add(url)
+
     existing_audios = os.listdir(AUDIO_SAVE_PATH)
-    urls = sorted([url for url in urls if f"{url.video_id}.mp3" not in existing_audios])
+    urls = sorted([url for url in processed_urls if f"{url.video_id}.mp3" not in existing_audios])
     return urls
 
 def main():
     # Get all urls
     urls = get_audios_to_process()
 
-    print(f"Number of URLs: {len(urls)}")
-
     while urls:
         try:
-            calculate_url_list(urls[:BATCH_SIZE], "Redownloading audio")
+            calculate_url_list(urls[:BATCH_SIZE], f"Redownloading audio ({len(urls)})")
             urls = urls[BATCH_SIZE:]
         except Exception as e:
             write_error("Failed to process batch", e)

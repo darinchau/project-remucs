@@ -316,7 +316,6 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
         clear_cuda()
 
         try:
-            audio.save(os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3"))
 
             processed = process_audio_features(audio, url, genre,
                 chord_model_path=CHORD_MODEL_PATH,
@@ -341,6 +340,9 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
 
             # Save the data entry
             encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{url.video_id}.dat3"))
+
+            # Save the audio
+            audio.save(os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3"))
             print(f"Entry processed: {url}")
         except Exception as e:
             write_error(f"Failed to process video: {url}", e)
