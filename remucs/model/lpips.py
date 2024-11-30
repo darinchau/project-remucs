@@ -120,6 +120,7 @@ class LPIPS(nn.Module):
             else:
                 out += d
 
+        assert out is not None
         return out / 4
 
     def forward_single(self, in0, in1):

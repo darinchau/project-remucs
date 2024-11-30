@@ -105,8 +105,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
     reconstruction_loss = torch.nn.MSELoss()
     discriminator_loss = torch.nn.MSELoss()
     perceptual_loss = LPIPS(
-        means = [0.1920, 0.1791, 0.1698, 0.0812],
-        stds = [0.1177, 0.1080, 0.1079, 0.0675]
+        means = [0.1885, 0.1751, 0.1698, 0.0800],
+        stds = [0.1164, 0.1066, 0.1065, 0.0672]
     ).eval().to(device)
 
     discriminator = Discriminator(im_channels=dataset_config['im_channels']).to(device)
