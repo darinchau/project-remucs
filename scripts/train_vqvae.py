@@ -9,6 +9,7 @@ import torchvision
 import os
 import numpy as np
 from tqdm import tqdm
+from torch.utils.data import ConcatDataset
 from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torchvision.utils import make_grid
@@ -66,7 +67,12 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str, dataset_dir: str):
+def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = False):
+    """Trains the VAE
+
+    config_path: str - Path to the config file
+    base_dir: str - Path to the directory where the model checkpoints will be saved
+    dataset_dirs: list[str] - Paths to the directory where the dataset is stored"""
     # Read the config file
     config = read_config(config_path)
 
@@ -80,16 +86,21 @@ def train(config_path: str, base_dir: str, dataset_dir: str):
     # Create the model and dataset #
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
 
-    # Print the model parameters and bail
+    # Print the model parameters and bail if necessary
     print(model)
     numel = 0
     for p in model.parameters():
         numel += p.numel()
     print('Total number of parameters: {}'.format(numel))
-    # exit(0)
+    if bail:
+        return
 
     # Create the dataset
-    im_dataset = SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
+    im_dataset = ConcatDataset([
+        SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
+        for dataset_dir in dataset_dirs])
+
+    print('Dataset size: {}'.format(len(im_dataset)))
 
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
