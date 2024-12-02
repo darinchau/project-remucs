@@ -4,7 +4,7 @@ dataset_params:
   nbars: 4
   im_channels : 4
   im_size : 512
-  num_workers_ds : 4 # Number of workers for loading the dataset
+  num_workers_ds : 0 # Number of workers for loading the dataset
 
 autoencoder_params:
   z_channels: 4
@@ -22,7 +22,7 @@ autoencoder_params:
 train_params:
   seed : 1943
   autoencoder_batch_size: 4
-  disc_start: 15000     # Start training discriminator after this many steps
+  disc_start: 5000     # Start training discriminator after this many steps
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
