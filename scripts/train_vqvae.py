@@ -15,6 +15,7 @@ from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
 import wandb
+import pickle
 from remucs.model import VQVAE, VQVAEConfig
 from remucs.model.lpips import LPIPS
 from remucs.dataset import SpectrogramDataset
@@ -96,9 +97,15 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
         return
 
     # Create the dataset
-    im_dataset = ConcatDataset([
-        SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
-        for dataset_dir in dataset_dirs])
+    datasets = []
+    for dataset_dir in dataset_dirs:
+        if os.path.isdir(dataset_dir):
+            ds = SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
+            pickle.dump(ds, open(dataset_dir + ".pkl", 'wb'))
+        else:
+            ds = pickle.load(open(dataset_dir, 'rb'))
+        datasets.append(ds)
+    im_dataset = ConcatDataset(datasets)
 
     print('Dataset size: {}'.format(len(im_dataset)))
 
