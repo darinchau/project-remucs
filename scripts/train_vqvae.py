@@ -260,8 +260,8 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
                          np.mean(perceptual_losses),
                          np.mean(codebook_losses)))
 
-        torch.save(model.state_dict(), os.path.join(base_dir, train_config['vqvae_autoencoder_ckpt_name']))
-        torch.save(discriminator.state_dict(), os.path.join(base_dir, train_config['vqvae_discriminator_ckpt_name']))
+        torch.save(model.state_dict(), os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{train_config['vqvae_autoencoder_ckpt_name']}"))
+        torch.save(discriminator.state_dict(), os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{train_config['vqvae_autoencoder_ckpt_name']}"))
 
     wandb.finish()
     print('Done Training...')
