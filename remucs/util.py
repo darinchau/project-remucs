@@ -130,9 +130,57 @@ class SpectrogramCollection:
             z.writestr("format.txt", metadata)
         os.replace(tmppath, path)
 
+    def save_unzipped(self, path: str):
+        """Save the collection as a directory of images."""
+        os.makedirs(path, exist_ok=True)
+        metadata = {
+            "sample_rate": self.sample_rate,
+            "hop_length": self.hop_length,
+            "n_fft": self.n_fft,
+            "win_length": self.win_length,
+            "max_value": self.max_value,
+            "power": self.power,
+            "target_width": self.target_width,
+            "target_height": self.target_height,
+            "format": self.format,
+            "spectrograms": [f"{id}{k}" for id, k in self.spectrograms.keys()]
+        }
+        metadata = json.dumps(metadata)
+        with open(os.path.join(path, "format.txt"), "w") as f:
+            f.write(metadata)
+        for _, (fn, img) in self.spectrograms.items():
+            filename = fn + "." + self.format
+            img.save(os.path.join(path, filename), lossless=True)
+
+    @staticmethod
+    def load_unzipped(path: str) -> SpectrogramCollection:
+        """Load a collection from a directory of images."""
+        with open(os.path.join(path, "format.txt"), "r") as f:
+            metadata = json.load(f)
+        collection = SpectrogramCollection(
+            sample_rate=metadata["sample_rate"],
+            hop_length=metadata["hop_length"],
+            n_fft=metadata["n_fft"],
+            win_length=metadata["win_length"],
+            max_value=metadata["max_value"],
+            power=metadata["power"],
+            target_width=metadata["target_width"],
+            target_height=metadata["target_height"],
+            format=metadata["format"],
+        )
+        for fn in os.listdir(path):
+            if fn == "format.txt":
+                continue
+            img = Image.open(os.path.join(path, fn))
+            part_id, bar_number, bar_start, bar_duration = SpectrogramCollection.parse_spectrogram_id(fn[:-len(collection.format) - 1])
+            collection.spectrograms[(part_id, bar_number)] = (fn, img)
+        return collection
+
     @staticmethod
     def load(path: str) -> SpectrogramCollection:
         """Load a collection from a zip file."""
+        if os.path.isdir(path):
+            return SpectrogramCollection.load_unzipped(path)
         with (
             zipfile.ZipFile(path, 'r') as z,
             tempfile.TemporaryDirectory() as tmpdirname
