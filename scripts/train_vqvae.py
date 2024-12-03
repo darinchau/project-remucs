@@ -128,6 +128,10 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
         stds = [0.1164, 0.1066, 0.1065, 0.0672]
     ).eval().to(device)
 
+    # Freeze perceptual loss parameters
+    for param in perceptual_loss.parameters():
+        param.requires_grad = False
+
     discriminator = Discriminator(im_channels=dataset_config['im_channels']).to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
