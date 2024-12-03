@@ -8,6 +8,7 @@ from torch.utils.data import Dataset
 from p_tqdm import p_umap
 import zipfile
 from tqdm.auto import tqdm
+import tempfile
 
 class SpectrogramDataset(Dataset):
     """Dataset class for loading spectrograms from .spec files.
@@ -55,7 +56,14 @@ class SpectrogramDataset(Dataset):
 
     def __getitem__(self, idx):
         path, bar = self.path_bar[idx]
-        s = SpectrogramCollection.load(path)
+        # Copy the file at path to a temporary file
+        # This is to avoid issues with the zipfile not being seekable
+        with tempfile.NamedTemporaryFile() as tmp:
+            with zipfile.ZipFile(path, 'r') as zip_ref:
+                with zip_ref.open(f"{bar}.spec") as file:
+                    tmp.write(file.read())
+            tmp.seek(0)
+            s = SpectrogramCollection.load(tmp.name)
         tensors = []
         for part in "VDIB":
             # Spectrogram is in CHW format
