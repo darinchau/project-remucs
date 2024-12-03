@@ -99,7 +99,7 @@ class DownBlock(nn.Module):
                 in_attn = out.reshape(batch_size, channels, h * w)
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
-                out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
+                out_attn, _ = self.attentions[i](in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
                 out = out + out_attn
 
@@ -175,7 +175,7 @@ class MidBlock(nn.Module):
             in_attn = out.reshape(batch_size, channels, h * w)
             in_attn = self.attention_norms[i](in_attn)
             in_attn = in_attn.transpose(1, 2)
-            out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
+            out_attn, _ = self.attentions[i](in_attn)
             out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
             out = out + out_attn
 
@@ -268,7 +268,7 @@ class UpBlock(nn.Module):
                 in_attn = out.reshape(batch_size, channels, h * w)
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
-                out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
+                out_attn, _ = self.attentions[i](in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
                 out = out + out_attn
         return out
