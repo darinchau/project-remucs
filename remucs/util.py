@@ -11,6 +11,7 @@ import tempfile
 import json
 from torch import Tensor
 import librosa
+from functools import lru_cache
 
 PartIDType = Literal["V", "D", "I", "B", "N"]
 class SpectrogramCollection:
@@ -177,6 +178,7 @@ class SpectrogramCollection:
         return collection
 
     @staticmethod
+    @lru_cache(maxsize=128)
     def load(path: str) -> SpectrogramCollection:
         """Load a collection from a zip file."""
         if os.path.isdir(path):
