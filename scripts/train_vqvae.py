@@ -204,7 +204,8 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
 
             ######### Optimize Generator ##########
             # L2 Loss
-            recon_loss = reconstruction_loss(output, im)
+            with autocast('cuda'):
+                recon_loss = reconstruction_loss(output, im)
             recon_losses.append(recon_loss.item())
             recon_loss = recon_loss / acc_steps
             g_loss: torch.Tensor = (recon_loss +
