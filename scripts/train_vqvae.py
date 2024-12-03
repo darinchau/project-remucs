@@ -91,7 +91,7 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
 
     # Print the model parameters and bail if necessary
-    print(model)
+    # print(model)
     numel = 0
     for p in model.parameters():
         numel += p.numel()
