@@ -14,6 +14,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
+from torch.amp import autocast
+from torch.amp import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
@@ -136,6 +138,13 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
+    scaler = GradScaler()
+
+    accelerator = Accelerator(mixed_precision="bf16")
+
+    model, optimizer_g, data_loader, scaler, optimizer_d = accelerator.prepare(
+        model, optimizer_g, data_loader, scaler, optimizer_d
+    )
 
     disc_step_start = train_config['disc_start']
     step_count = 0
@@ -171,7 +180,8 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
             im = im [:, :, 0]
 
             # Fetch autoencoders output(reconstructions)
-            model_output = model(im)
+            with autocast('cuda'):
+                model_output = model(im)
             output, z, quantize_losses = model_output
 
             # Image Saving Logic
@@ -197,7 +207,7 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
             recon_loss = reconstruction_loss(output, im)
             recon_losses.append(recon_loss.item())
             recon_loss = recon_loss / acc_steps
-            g_loss = (recon_loss +
+            g_loss: torch.Tensor = (recon_loss +
                       (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
                       (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps))
             codebook_losses.append(train_config['codebook_weight'] * quantize_losses['codebook_loss'].item())
@@ -217,7 +227,7 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
             g_loss += train_config['perceptual_weight']*lpips_loss / acc_steps
 
             losses.append(g_loss.item())
-            g_loss.backward()
+            accelerator.backward(g_loss)
             #####################################
 
             ######### Optimize Discriminator #######
@@ -234,14 +244,14 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
                 disc_loss = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
                 disc_losses.append(disc_loss.item())
                 disc_loss = disc_loss / acc_steps
-                disc_loss.backward()
+                accelerator.backward(disc_loss)
                 if step_count % acc_steps == 0:
                     optimizer_d.step()
                     optimizer_d.zero_grad()
             #####################################
 
             if step_count % acc_steps == 0:
-                optimizer_g.step()
+                scaler.step(optimizer_g)
                 optimizer_g.zero_grad()
 
             # Log losses
