@@ -22,15 +22,15 @@ autoencoder_params:
 
 train_params:
   seed : 1943
-  autoencoder_batch_size: 4
-  disc_start: 5     # Start training discriminator after this many steps. Set to a very small number for testing
+  autoencoder_batch_size: 1
+  disc_start: 17     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
   perceptual_weight: 1
   epochs: 20
   autoencoder_lr: 0.00001
-  autoencoder_acc_steps: 4
+  autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'

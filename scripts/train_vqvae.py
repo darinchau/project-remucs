@@ -8,7 +8,7 @@ import random
 import torchvision
 import os
 import numpy as np
-from tqdm import tqdm
+from tqdm.auto import tqdm
 from torch.utils.data import ConcatDataset
 from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
