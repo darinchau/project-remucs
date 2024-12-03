@@ -18,6 +18,7 @@ autoencoder_params:
   num_down_layers : 2
   num_mid_layers : 2
   num_up_layers : 2
+  gradient_checkpointing : False
 
 train_params:
   seed : 1943

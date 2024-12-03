@@ -4,7 +4,7 @@
 import torch
 from torch import nn, Tensor
 from dataclasses import dataclass
-from diffusers.models.attention_processor import Attention
+from torch.utils.checkpoint import checkpoint
 
 def get_time_embedding(time_steps: Tensor, temb_dim: int):
     r"""
@@ -36,8 +36,9 @@ class DownBlock(nn.Module):
     2. Attention block
     3. Downsample
     """
-    def __init__(self, in_channels, out_channels, down_sample, num_heads, num_layers, attn, norm_channels):
+    def __init__(self, in_channels, out_channels, down_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False):
         super().__init__()
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.num_layers = num_layers
         self.down_sample = down_sample
         self.attn = attn
@@ -72,7 +73,7 @@ class DownBlock(nn.Module):
             )
 
             self.attentions = nn.ModuleList(
-                [Attention(out_channels, heads=num_heads)
+                [nn.MultiheadAttention(out_channels, num_heads, batch_first=True, bias=False)
                  for _ in range(num_layers)]
             )
 
@@ -99,7 +100,10 @@ class DownBlock(nn.Module):
                 in_attn = out.reshape(batch_size, channels, h * w)
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
-                out_attn = self.attentions[i](in_attn)
+                if self.use_gradient_checkpointing:
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+                else:
+                    out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
                 out = out + out_attn
 
@@ -117,9 +121,10 @@ class MidBlock(nn.Module):
     3. Resnet block with time embedding
     """
 
-    def __init__(self, in_channels, out_channels, num_heads, num_layers, norm_channels):
+    def __init__(self, in_channels, out_channels, num_heads, num_layers, norm_channels, use_gradient_checkpointing=False):
         super().__init__()
         self.num_layers = num_layers
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.resnet_conv_first = nn.ModuleList(
             [
                 nn.Sequential(
@@ -149,7 +154,7 @@ class MidBlock(nn.Module):
         )
 
         self.attentions = nn.ModuleList(
-            [Attention(out_channels, heads=num_heads)
+            [nn.MultiheadAttention(out_channels, num_heads, batch_first=True, bias=False)
              for _ in range(num_layers)]
         )
 
@@ -175,7 +180,10 @@ class MidBlock(nn.Module):
             in_attn = out.reshape(batch_size, channels, h * w)
             in_attn = self.attention_norms[i](in_attn)
             in_attn = in_attn.transpose(1, 2)
-            out_attn = self.attentions[i](in_attn)
+            if self.use_gradient_checkpointing:
+                out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+            else:
+                out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
             out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
             out = out + out_attn
 
@@ -197,11 +205,12 @@ class UpBlock(nn.Module):
     3. Attention Block
     """
 
-    def __init__(self, in_channels, out_channels, up_sample, num_heads, num_layers, attn, norm_channels):
+    def __init__(self, in_channels, out_channels, up_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False):
         super().__init__()
         self.num_layers = num_layers
         self.up_sample = up_sample
         self.attn = attn
+        self.use_gradient_checkpointing = use_gradient_checkpointing
         self.resnet_conv_first = nn.ModuleList(
             [
                 nn.Sequential(
@@ -235,7 +244,7 @@ class UpBlock(nn.Module):
 
             self.attentions = nn.ModuleList(
                 [
-                    Attention(out_channels, heads=num_heads)
+                    nn.MultiheadAttention(out_channels, num_heads, batch_first=True, bias=False)
                     for _ in range(num_layers)
                 ]
             )
@@ -268,7 +277,10 @@ class UpBlock(nn.Module):
                 in_attn = out.reshape(batch_size, channels, h * w)
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
-                out_attn = self.attentions[i](in_attn)
+                if self.use_gradient_checkpointing:
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+                else:
+                    out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
                 out = out + out_attn
         return out
@@ -286,6 +298,7 @@ class VQVAEConfig:
     codebook_size: int
     norm_channels: int
     num_heads: int
+    gradient_checkpointing: bool
 
 class VQVAE(nn.Module):
     def __init__(self, im_channels, model_config: VQVAEConfig):
@@ -296,6 +309,7 @@ class VQVAE(nn.Module):
         self.num_down_layers = model_config.num_down_layers
         self.num_mid_layers = model_config.num_mid_layers
         self.num_up_layers = model_config.num_up_layers
+        self.gradient_checkpointing = model_config.gradient_checkpointing
 
         # self.attns[i] is True if attention is used in ith down block
         self.attns = model_config.attn_down
@@ -326,14 +340,16 @@ class VQVAE(nn.Module):
                                                  num_heads=self.num_heads,
                                                  num_layers=self.num_down_layers,
                                                  attn=self.attns[i],
-                                                 norm_channels=self.norm_channels))
+                                                 norm_channels=self.norm_channels,
+                                                 use_gradient_checkpointing=self.gradient_checkpointing))
 
         self.encoder_mids = nn.ModuleList([])
         for i in range(len(self.mid_channels) - 1):
             self.encoder_mids.append(MidBlock(self.mid_channels[i], self.mid_channels[i + 1],
                                               num_heads=self.num_heads,
                                               num_layers=self.num_mid_layers,
-                                              norm_channels=self.norm_channels))
+                                              norm_channels=self.norm_channels,
+                                              use_gradient_checkpointing=self.gradient_checkpointing))
 
         self.encoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[-1])
         self.encoder_conv_out = nn.Conv2d(self.down_channels[-1], self.z_channels, kernel_size=3, padding=1)
@@ -356,7 +372,8 @@ class VQVAE(nn.Module):
             self.decoder_mids.append(MidBlock(self.mid_channels[i], self.mid_channels[i - 1],
                                               num_heads=self.num_heads,
                                               num_layers=self.num_mid_layers,
-                                              norm_channels=self.norm_channels))
+                                              norm_channels=self.norm_channels,
+                                              use_gradient_checkpointing=self.gradient_checkpointing))
 
         self.decoder_layers = nn.ModuleList([])
         for i in reversed(range(1, len(self.down_channels))):
@@ -365,7 +382,8 @@ class VQVAE(nn.Module):
                                                num_heads=self.num_heads,
                                                num_layers=self.num_up_layers,
                                                attn=self.attns[i-1],
-                                               norm_channels=self.norm_channels))
+                                               norm_channels=self.norm_channels,
+                                               use_gradient_checkpointing=self.gradient_checkpointing))
 
         self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
         self.decoder_conv_out = nn.Conv2d(self.down_channels[0], im_channels, kernel_size=3, padding=1)

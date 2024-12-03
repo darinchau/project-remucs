@@ -184,23 +184,23 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
                 model_output = model(im)
             output, z, quantize_losses = model_output
 
-            # Image Saving Logic
+            # Image Saving Logic, disabled for now ## TODO : Enable this
             if step_count % image_save_steps == 0 or step_count == 1:
                 torch.save(model.state_dict(), os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
                 torch.save(discriminator.state_dict(), os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
 
-                sample_size = min(8, im.shape[0])
-                save_output = torch.clamp(output[:sample_size], -1., 1.).detach().cpu()
-                save_output = ((save_output + 1) / 2)
-                save_input = ((im[:sample_size] + 1) / 2).detach().cpu()
+                # sample_size = min(8, im.shape[0])
+                # save_output = torch.clamp(output[:sample_size], -1., 1.).detach().cpu()
+                # save_output = ((save_output + 1) / 2)
+                # save_input = ((im[:sample_size] + 1) / 2).detach().cpu()
 
-                grid = make_grid(torch.cat([save_input, save_output], dim=0), nrow=sample_size)
-                img = torchvision.transforms.ToPILImage()(grid)
-                if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
-                    os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
-                img.save(os.path.join(base_dir,'vqvae_autoencoder_samples', 'current_autoencoder_sample_{}.png'.format(img_save_count)))
-                img_save_count += 1
-                img.close()
+                # grid = make_grid(torch.cat([save_input, save_output], dim=0), nrow=sample_size)
+                # img = torchvision.transforms.ToPILImage()(grid)
+                # if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
+                #     os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
+                # img.save(os.path.join(base_dir,'vqvae_autoencoder_samples', 'current_autoencoder_sample_{}.png'.format(img_save_count)))
+                # img_save_count += 1
+                # img.close()
 
             ######### Optimize Generator ##########
             # L2 Loss
