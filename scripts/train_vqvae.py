@@ -171,6 +171,9 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
 
             # Image Saving Logic
             if step_count % image_save_steps == 0 or step_count == 1:
+                torch.save(model.state_dict(), os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
+                torch.save(discriminator.state_dict(), os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
+
                 sample_size = min(8, im.shape[0])
                 save_output = torch.clamp(output[:sample_size], -1., 1.).detach().cpu()
                 save_output = ((save_output + 1) / 2)

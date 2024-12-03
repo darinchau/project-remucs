@@ -30,6 +30,6 @@ train_params:
   epochs: 20
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 4
-  autoencoder_img_save_steps: 64
+  autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
