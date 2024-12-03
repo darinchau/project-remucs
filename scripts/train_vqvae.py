@@ -251,7 +251,7 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
             #####################################
 
             if step_count % acc_steps == 0:
-                scaler.step(optimizer_g)
+                optimizer_g.step()
                 optimizer_g.zero_grad()
 
             # Log losses
