@@ -9,6 +9,7 @@ from p_tqdm import p_umap
 import zipfile
 from tqdm.auto import tqdm
 import tempfile
+import shutil
 
 class SpectrogramDataset(Dataset):
     """Dataset class for loading spectrograms from .spec files.
@@ -59,10 +60,7 @@ class SpectrogramDataset(Dataset):
         # Copy the file at path to a temporary file
         # This is to avoid issues with the zipfile not being seekable
         with tempfile.NamedTemporaryFile() as tmp:
-            with zipfile.ZipFile(path, 'r') as zip_ref:
-                with zip_ref.open(f"{bar}.spec") as file:
-                    tmp.write(file.read())
-            tmp.seek(0)
+            shutil.copy(path, tmp.name)
             s = SpectrogramCollection.load(tmp.name)
         tensors = []
         for part in "VDIB":
