@@ -35,17 +35,15 @@ class SpectrogramDataset(Dataset):
         if "lookup_table.json" in files:
             with open(os.path.join(dataset_dir, "lookup_table.json"), "r") as f:
                 lookup_table = json.load(f)
-            self.path_bar = [(os.path.join(dataset_dir, x), lookup_table[x]) for x in lookup_table if x in files]
-            self.nbars = nbars
-            return
-
-        if load_first_n >= 0:
-            files = files[:load_first_n]
-        if num_workers == 0:
-            collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files)]
+            collection = [(os.path.join(dataset_dir, x), lookup_table[x]) for x in lookup_table if x in files]
         else:
-            collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in files], num_cpus=num_workers)
-        collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
+            if load_first_n >= 0:
+                files = files[:load_first_n]
+            if num_workers == 0:
+                collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files)]
+            else:
+                collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in files], num_cpus=num_workers)
+            collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
         self.path_bar = []
         for path, bars in collection:
             for bar in bars:
