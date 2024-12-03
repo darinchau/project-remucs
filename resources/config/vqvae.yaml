@@ -24,7 +24,7 @@ train_params:
   seed : 1943
   num_workers_dl: 0
   autoencoder_batch_size: 3 # Maximum batch size on a single L4 GPU with 24GB VRAM
-  disc_start: 17     # Start training discriminator after this many steps. Set to a very small number for testing
+  disc_start: 4096     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
