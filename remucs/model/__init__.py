@@ -4,6 +4,7 @@
 import torch
 from torch import nn, Tensor
 from dataclasses import dataclass
+from diffusers.models.attention_processor import Attention
 
 def get_time_embedding(time_steps: Tensor, temb_dim: int):
     r"""
@@ -71,7 +72,7 @@ class DownBlock(nn.Module):
             )
 
             self.attentions = nn.ModuleList(
-                [nn.MultiheadAttention(out_channels, num_heads, batch_first=True)
+                [Attention(out_channels, heads=num_heads)
                  for _ in range(num_layers)]
             )
 
@@ -148,7 +149,7 @@ class MidBlock(nn.Module):
         )
 
         self.attentions = nn.ModuleList(
-            [nn.MultiheadAttention(out_channels, num_heads, batch_first=True)
+            [Attention(out_channels, heads=num_heads)
              for _ in range(num_layers)]
         )
 
@@ -234,7 +235,7 @@ class UpBlock(nn.Module):
 
             self.attentions = nn.ModuleList(
                 [
-                    nn.MultiheadAttention(out_channels, num_heads, batch_first=True)
+                    Attention(out_channels, heads=num_heads)
                     for _ in range(num_layers)
                 ]
             )

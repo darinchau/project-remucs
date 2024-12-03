@@ -16,6 +16,7 @@ from torchvision.utils import make_grid
 from torch import nn, Tensor
 import wandb
 import pickle
+from accelerate import Accelerator
 from remucs.model import VQVAE, VQVAEConfig
 from remucs.model.lpips import LPIPS
 from remucs.dataset import SpectrogramDataset
