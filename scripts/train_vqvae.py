@@ -115,7 +115,7 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
                              num_workers=train_config['num_workers_dl'],
-                             shuffle=True)
+                             shuffle=False)
 
     # Create output directories
     if not os.path.exists(base_dir):
