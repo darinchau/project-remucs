@@ -18,12 +18,12 @@ autoencoder_params:
   num_down_layers : 2
   num_mid_layers : 2
   num_up_layers : 2
-  gradient_checkpointing : False
+  gradient_checkpointing : True
 
 train_params:
   seed : 1943
   autoencoder_batch_size: 4
-  disc_start: 5000     # Start training discriminator after this many steps
+  disc_start: 5     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
