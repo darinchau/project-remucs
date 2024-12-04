@@ -81,3 +81,5 @@ scripts/playlist_queue.txt
 !/resources/config
 !/resources/config/*
 !cleanup.ipynb
+# uploaded files for google cloud
+uploaded_files.txt
