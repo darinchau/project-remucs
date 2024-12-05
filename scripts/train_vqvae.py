@@ -74,7 +74,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
 
     config_path: str - Path to the config file
     base_dir: str - Path to the directory where the model checkpoints will be saved
-    dataset_dirs: list[str] - Paths to the directory where the dataset is stored"""
+    dataset_dir: str - Paths to the directory where the backup dataset is stored"""
     # Read the config file
     config = read_config(config_path)
 
@@ -98,7 +98,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
         return
 
     # Create the dataset
-    datasets = []
     im_dataset = SpectrogramDatasetFromCloud(
         lookup_table_path=dataset_config["lookup_table_path"],
         default_specs=SpectrogramDataset(dataset_dir = dataset_dir, num_workers=0),
