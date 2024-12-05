@@ -10,6 +10,7 @@ import zipfile
 from tqdm.auto import tqdm
 import tempfile
 import shutil
+import random
 
 class SpectrogramDataset(Dataset):
     """Dataset class for loading spectrograms from .spec files.
@@ -38,6 +39,8 @@ class SpectrogramDataset(Dataset):
             with open(os.path.join(dataset_dir, "lookup_table.json"), "r") as f:
                 lookup_table = json.load(f)
             collection = [(os.path.join(dataset_dir, x), lookup_table[x]) for x in lookup_table if x in files]
+            if load_first_n >= 0:
+                collection = collection[:load_first_n]
         else:
             if load_first_n >= 0:
                 files = files[:load_first_n]
@@ -51,35 +54,86 @@ class SpectrogramDataset(Dataset):
             for bar in bars:
                 self.path_bar.append((path, bar))
         self.nbars = nbars
+        self.dataset_dir = dataset_dir
+        self.load_first_n = load_first_n
 
     def __len__(self):
         return len(self.path_bar)
 
     def __getitem__(self, idx):
         path, bar = self.path_bar[idx]
-        # Copy the file at path to a temporary file
-        # This is to avoid issues with the zipfile not being seekable
-        with tempfile.NamedTemporaryFile() as tmp:
-            shutil.copy(path, tmp.name)
-            s = SpectrogramCollection.load(tmp.name)
-        tensors = []
-        for part in "VDIB":
-            # Spectrogram is in CHW format
-            # Where H is the time axis. Need concat along time
-            assert part in ("V", "D", "I", "B") # To pass the typechecker
-            specs = [s.get_spectrogram(part, i) for i in range(bar, bar + self.nbars)]
-            if not all(spec is not None for spec in specs):
-                # TODO: Handle this more gracefully
-                raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
-            if not all(spec.shape == (2, 128, 512) for spec in specs):
-                raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
-            data = torch.cat(specs, dim=1)
-            tensors.append(data)
-        data = torch.stack(tensors)
-        # Return shape: 4, 2, H, W (should be 512, 512)
-        return data
+        s = SpectrogramCollection.load(path)
+        return process_spectrogram(s, bar, self.nbars, path)
 
-def load_spec_bars(path: str, nbars: int = 4) -> list[tuple[PartIDType, int]]:
+class SpectrogramDatasetFromCloud(Dataset):
+    """Spectrogram Dataset but instead we load from a Google Cloud Storage bucket.
+    Several key differences:
+    - We rely completely on the lookup table during initialization
+    - Default objects are present in case of error. This is done using the test specs
+    - default_specs_dir is the directory containing the default spectrograms
+    """
+    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset, credentials_path: str, bucket_name: str, nbars: int = 4):
+        # Confirm google cloud storage is installed
+        try:
+            import google.cloud.storage
+        except ImportError:
+            raise ImportError("Please install google-cloud-storage to use SpectrogramDatasetFromCloud")
+        from google.cloud import storage
+        from google.oauth2 import service_account
+
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        storage_client = storage.Client(credentials=credentials)
+        self.bucket = storage_client.bucket(bucket_name)
+
+        # Perform lookup
+        if not os.path.exists(lookup_table_path):
+            raise ValueError(f"Lookup table {lookup_table_path} does not exist")
+        with open(lookup_table_path, "r") as f:
+            lookup_table = json.load(f)
+        collection = [(x, lookup_table[x]) for x in lookup_table]
+        self.path_bar = []
+        for path, bars in collection:
+            for bar in bars:
+                self.path_bar.append((path, bar))
+        self.nbars = nbars
+
+        # Load default objects
+        self.default_specs = default_specs
+        self.lookup_table_path = lookup_table_path
+        self.default_specs_loaded = [
+            self.default_specs[i] for i in range(len(self.default_specs))
+        ]
+
+    def __len__(self):
+        return len(self.path_bar)
+
+    def __getitem__(self, idx):
+        def load_from_drive(file_name: str):
+            try:
+                blob = self.bucket.blob(file_name)
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    local_file_path = os.path.join(temp_dir, file_name)
+
+                    # Download the file to a temporary directory
+                    blob.download_to_filename(local_file_path)
+
+                    # Load the file
+                    s = SpectrogramCollection.load(local_file_path)
+                    return s
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                return None
+
+        path, bar = self.path_bar[idx]
+        s = load_from_drive(path)
+        if s is None:
+            print(f"Failed to load {path}. Using default spectrograms instead.")
+            default_idx = random.randint(0, len(self.default_specs_loaded) - 1)
+            return self.default_specs_loaded[default_idx]
+
+        return process_spectrogram(s, bar, self.nbars, path)
+
+def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
     """Loads the available bars from a spectrogram data file"""
     with zipfile.ZipFile(path, 'r') as zip_ref:
         if 'format.txt' not in zip_ref.namelist():
@@ -104,3 +158,21 @@ def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int
         if all([key in spectrograms for key in keys_check]):
             valids.append(i)
     return valids
+
+def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str) -> torch.Tensor:
+    """Processes the spectrogram data from a SpectrogramCollection object into a training object"""
+    tensors = []
+    for part in "VDIB":
+        # Spectrogram is in CHW format
+        # Where H is the time axis. Need concat along time
+        assert part in ("V", "D", "I", "B") # To pass the typechecker
+        specs = [s.get_spectrogram(part, i) for i in range(bar, bar + nbars)]
+        if not all(spec is not None for spec in specs):
+            raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
+        if not all(spec.shape == (2, 128, 512) for spec in specs): # type: ignore
+            raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
+        data = torch.cat(specs, dim=1) # type: ignore
+        tensors.append(data)
+    data = torch.stack(tensors)
+    # Return shape: 4, 2, H, W (should be 512, 512)
+    return data

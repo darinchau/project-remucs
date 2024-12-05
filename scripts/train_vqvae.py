@@ -14,8 +14,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
-from torch.amp import autocast
-from torch.amp import GradScaler
+from torch.amp import autocast # type: ignore
+from torch.amp import GradScaler # type: ignore
 import wandb
 import pickle
 from accelerate import Accelerator
