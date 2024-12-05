@@ -7,7 +7,7 @@ import json
 from torch.utils.data import Dataset
 from p_tqdm import p_umap
 import zipfile
-from tqdm.auto import tqdm
+from tqdm.auto import tqdm, trange
 import tempfile
 import shutil
 import random
@@ -102,7 +102,7 @@ class SpectrogramDatasetFromCloud(Dataset):
         self.default_specs = default_specs
         self.lookup_table_path = lookup_table_path
         self.default_specs_loaded = [
-            self.default_specs[i] for i in range(len(self.default_specs))
+            self.default_specs[i] for i in trange(len(self.default_specs), desc="Processing spectrograms")
         ]
 
         if not os.path.exists(cache_dir):
