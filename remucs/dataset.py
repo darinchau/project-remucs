@@ -71,8 +71,9 @@ class SpectrogramDatasetFromCloud(Dataset):
     - We rely completely on the lookup table during initialization
     - Default objects are present in case of error. This is done using the test specs
     - default_specs_dir is the directory containing the default spectrograms
+    - Implements a LRU cache to store the spectrograms in memory
     """
-    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset, credentials_path: str, bucket_name: str, nbars: int = 4):
+    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset, credentials_path: str, bucket_name: str, cache_dir: str, nbars: int = 4, size_limit_mb: int = 16384):
         # Confirm google cloud storage is installed
         try:
             import google.cloud.storage
@@ -104,22 +105,56 @@ class SpectrogramDatasetFromCloud(Dataset):
             self.default_specs[i] for i in range(len(self.default_specs))
         ]
 
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+        self.cache_dir = cache_dir
+        self.size_limit = size_limit_mb * 1024 * 1024
+        self.cache = {x: 0 for x in os.listdir(cache_dir) if x.endswith(".spec.zip")}
+        self._counter = 0
+        self._to_delete = []
+
     def __len__(self):
         return len(self.path_bar)
+
+    def clear_cache(self):
+        """Clears the cache"""
+        ### Clear cache files ###
+        deleted = []
+        for file in self._to_delete:
+            try:
+                os.remove(os.path.join(self.cache_dir, file))
+                deleted.append(file)
+            except Exception as e:
+                pass
+        self._to_delete = [x for x in self._to_delete if x not in deleted]
+
+        # Get size of cache directory
+        size = sum(os.path.getsize(os.path.join(self.cache_dir, x)) for x in os.listdir(self.cache_dir) if x.endswith(".spec.zip"))
+        while size > self.size_limit:
+            # Sort by last accessed
+            to_remove = min(self.cache.items(), key=lambda x: x[1])
+            try:
+                file_size = os.path.getsize(os.path.join(self.cache_dir, to_remove[0]))
+                os.remove(os.path.join(self.cache_dir, to_remove[0]))
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                self._to_delete.append(to_remove[0])
+            size -= file_size
+            del self.cache[to_remove[0]]
+        self.cache = {}
+        self._counter = 0
 
     def __getitem__(self, idx):
         def load_from_drive(file_name: str):
             try:
                 blob = self.bucket.blob(file_name)
-                with tempfile.TemporaryDirectory() as temp_dir:
-                    local_file_path = os.path.join(temp_dir, file_name)
-
-                    # Download the file to a temporary directory
+                local_file_path = os.path.join(self.cache_dir, file_name)
+                if not os.path.exists(local_file_path):
                     blob.download_to_filename(local_file_path)
-
-                    # Load the file
-                    s = SpectrogramCollection.load(local_file_path)
-                    return s
+                self.cache[file_name] = self._counter
+                s = SpectrogramCollection.load(local_file_path)
+                self._counter += 1
+                return s
             except Exception as e:
                 print(f"An error occurred: {e}")
                 return None

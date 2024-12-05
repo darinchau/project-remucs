@@ -14,8 +14,8 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torchvision.utils import make_grid
 from torch import nn, Tensor
-from torch.amp import autocast # type: ignore
-from torch.amp import GradScaler # type: ignore
+from torch.amp.autocast_mode import autocast
+from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
@@ -27,7 +27,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class Discriminator(nn.Module):
     """Implements patchGAN for adversarial loss"""
-    def __init__(self, im_channels=3,
+    def __init__(self, im_channels,
                  conv_channels=[64, 128, 256],
                  kernels=[4,4,4,4],
                  strides=[2,2,2,1],
