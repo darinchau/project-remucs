@@ -5,6 +5,10 @@ dataset_params:
   im_channels : 4
   im_size : 512
   num_workers_ds : 0 # Number of workers for loading the dataset
+  lookup_table_path: "./resources/lookup_table.json"
+  credentials_path: "./resources/key/key.json"
+  bucket_name: "project-remucs-spectrograms-1"
+  cache_dir: "./resources/spec_cache"
 
 autoencoder_params:
   z_channels: 4

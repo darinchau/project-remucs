@@ -5,14 +5,12 @@ import yaml
 import argparse
 import torch
 import random
-import torchvision
 import os
 import numpy as np
 from tqdm.auto import tqdm
 from torch.utils.data import ConcatDataset
 from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
-from torchvision.utils import make_grid
 from torch import nn, Tensor
 from torch.amp.autocast_mode import autocast
 from torch.amp.grad_scaler import GradScaler
@@ -21,7 +19,7 @@ import pickle
 from accelerate import Accelerator
 from remucs.model import VQVAE, VQVAEConfig
 from remucs.model.lpips import LPIPS
-from remucs.dataset import SpectrogramDataset
+from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -71,7 +69,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = False):
+def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
     """Trains the VAE
 
     config_path: str - Path to the config file
@@ -101,21 +99,22 @@ def train(config_path: str, base_dir: str, dataset_dirs: list[str], *, bail = Fa
 
     # Create the dataset
     datasets = []
-    for dataset_dir in dataset_dirs:
-        if os.path.isdir(dataset_dir):
-            ds = SpectrogramDataset(dataset_dir, nbars=dataset_config['nbars'], num_workers=dataset_config["num_workers_ds"])
-            pickle.dump(ds, open(dataset_dir + ".pkl", 'wb'))
-        else:
-            ds = pickle.load(open(dataset_dir, 'rb'))
-        datasets.append(ds)
-    im_dataset = ConcatDataset(datasets)
+    im_dataset = SpectrogramDatasetFromCloud(
+        lookup_table_path=dataset_config["lookup_table_path"],
+        default_specs=SpectrogramDataset(dataset_dir = dataset_dir, num_workers=0),
+        credentials_path=dataset_config["credentials_path"],
+        bucket_name=dataset_config["bucket_name"],
+        cache_dir=dataset_config["cache_dir"],
+        nbars = dataset_config["nbars"],
+    )
+
 
     print('Dataset size: {}'.format(len(im_dataset)))
 
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
                              num_workers=train_config['num_workers_dl'],
-                             shuffle=False)
+                             shuffle=False) # Bad machine learning practice but saves so much on my cloud bill
 
     # Create output directories
     if not os.path.exists(base_dir):
@@ -300,4 +299,6 @@ if __name__ == '__main__':
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
     parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/ckpts/vqvae')
     args = parser.parse_args()
-    train(args.config_path, args.base_dir, args.dataset_dir)
+    train(args.config_path, args.base_dir, [
+        args.dataset_dir
+    ])
