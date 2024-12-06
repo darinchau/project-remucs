@@ -141,8 +141,6 @@ class SpectrogramDatasetFromCloud(Dataset):
                 self._to_delete.append(to_remove[0])
             size -= file_size
             del self.cache[to_remove[0]]
-        self.cache = {}
-        self._counter = 0
 
     def __getitem__(self, idx):
         def load_from_drive(file_name: str):
@@ -166,6 +164,7 @@ class SpectrogramDatasetFromCloud(Dataset):
             default_idx = random.randint(0, len(self.default_specs_loaded) - 1)
             return self.default_specs_loaded[default_idx]
 
+        self.clear_cache()
         return process_spectrogram(s, bar, self.nbars, path)
 
 def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:

@@ -69,7 +69,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
+def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, start_from_iter: int = 0):
     """Trains the VAE
 
     config_path: str - Path to the config file
@@ -90,6 +90,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
 
     # Print the model parameters and bail if necessary
     # print(model)
+    print(f"Starting from iteration {start_from_iter}")
+
     numel = 0
     for p in model.parameters():
         numel += p.numel()
@@ -100,7 +102,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
     # Create the dataset
     im_dataset = SpectrogramDatasetFromCloud(
         lookup_table_path=dataset_config["lookup_table_path"],
-        default_specs=SpectrogramDataset(dataset_dir = dataset_dir, num_workers=0),
+        default_specs=SpectrogramDataset(dataset_dir = dataset_dir, num_workers=0, load_first_n=10),
         credentials_path=dataset_config["credentials_path"],
         bucket_name=dataset_config["bucket_name"],
         cache_dir=dataset_config["cache_dir"],
@@ -152,7 +154,21 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
     # And one cant afford higher batch sizes
     acc_steps = train_config['autoencoder_acc_steps']
     image_save_steps = train_config['autoencoder_img_save_steps']
-    img_save_count = 0
+
+    # Keep track of the saved specs and stuff
+    saved_vaes = []
+    saved_discs = []
+    max_allowed_ckpts = train_config["max_allowed_ckpts"]
+
+    # Reload checkpoint
+    if start_from_iter > 0:
+        model_save_path = os.path.join(base_dir, f"vqvae_epoch_0_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        model_sd = torch.load(model_save_path)
+        model.load_state_dict(model_sd)
+        disc_save_path = os.path.join(base_dir, f"discriminator_epoch_0_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        disc_sd = torch.load(disc_save_path)
+        discriminator.load_state_dict(disc_sd)
+        step_count = start_from_iter
 
     wandb.init(
         # set the wandb project where this run will be logged
@@ -183,23 +199,25 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
                 model_output = model(im)
             output, z, quantize_losses = model_output
 
-            # Image Saving Logic, disabled for now ## TODO : Enable this
+            # Save the model
             if step_count % image_save_steps == 0 or step_count == 1:
-                torch.save(model.state_dict(), os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
-                torch.save(discriminator.state_dict(), os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}"))
-
-                # sample_size = min(8, im.shape[0])
-                # save_output = torch.clamp(output[:sample_size], -1., 1.).detach().cpu()
-                # save_output = ((save_output + 1) / 2)
-                # save_input = ((im[:sample_size] + 1) / 2).detach().cpu()
-
-                # grid = make_grid(torch.cat([save_input, save_output], dim=0), nrow=sample_size)
-                # img = torchvision.transforms.ToPILImage()(grid)
-                # if not os.path.exists(os.path.join(base_dir,'vqvae_autoencoder_samples')):
-                #     os.mkdir(os.path.join(base_dir, 'vqvae_autoencoder_samples'))
-                # img.save(os.path.join(base_dir,'vqvae_autoencoder_samples', 'current_autoencoder_sample_{}.png'.format(img_save_count)))
-                # img_save_count += 1
-                # img.close()
+                model_save_path = os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+                disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+                torch.save(model.state_dict(), model_save_path)
+                torch.save(discriminator.state_dict(), disc_save_path)
+                saved_vaes.append(model_save_path)
+                saved_discs.append(model_save_path)
+                while len(os.listdir(base_dir)) > max_allowed_ckpts and len(saved_vaes) > 1 and len(saved_discs) > 1:
+                    first_saved_vae = saved_vaes.pop(0)
+                    first_saved_disc = saved_discs.pop(0)
+                    try:
+                        os.remove(first_saved_vae)
+                        os.remove(first_saved_disc)
+                    except Exception as e:
+                        print("Failed to remove checkpoint from folder.")
+                        saved_vaes.insert(0, first_saved_vae)
+                        saved_discs.insert(0, first_saved_disc)
+                        break
 
             ######### Optimize Generator ##########
             # L2 Loss
@@ -285,8 +303,23 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False):
                          np.mean(perceptual_losses),
                          np.mean(codebook_losses)))
 
-        torch.save(model.state_dict(), os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{train_config['vqvae_autoencoder_ckpt_name']}"))
-        torch.save(discriminator.state_dict(), os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{train_config['vqvae_autoencoder_ckpt_name']}"))
+        model_save_path = os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        torch.save(model.state_dict(), model_save_path)
+        torch.save(discriminator.state_dict(), disc_save_path)
+        saved_vaes.append(model_save_path)
+        saved_discs.append(model_save_path)
+        while len(os.listdir(base_dir)) > max_allowed_ckpts and len(saved_vaes) > 1 and len(saved_discs) > 1:
+            first_saved_vae = saved_vaes.pop(0)
+            first_saved_disc = saved_discs.pop(0)
+            try:
+                os.remove(first_saved_vae)
+                os.remove(first_saved_disc)
+            except Exception as e:
+                print("Failed to remove checkpoint from folder.")
+                saved_vaes.insert(0, first_saved_vae)
+                saved_discs.insert(0, first_saved_disc)
+                break
 
     wandb.finish()
     print('Done Training...')
@@ -297,5 +330,6 @@ if __name__ == '__main__':
     parser.add_argument('--dataset_dir', dest='dataset_dir', type=str, default='resources/test_specs')
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
     parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/models/vqvae')
+    parser.add_argument('--start_iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
-    train(args.config_path, args.base_dir, args.dataset_dir)
+    train(args.config_path, args.base_dir, args.dataset_dir, start_from_iter=args.start_iter)

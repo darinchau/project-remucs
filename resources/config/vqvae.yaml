@@ -37,5 +37,6 @@ train_params:
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
+  max_allowed_ckpts: 32
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
