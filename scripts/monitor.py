@@ -1,13 +1,13 @@
 # Looks at the model folder really hard and pray it doesnt explode
 
-
 import os
+import sys
 import time
 
 base_dir = "./resources/models/vqvae"
 FILE_LIMIT = 15
 
-a = 139264
+a = sys.argv[1]
 while True:
     time.sleep(10)
     if len(os.listdir(base_dir)) < FILE_LIMIT:
