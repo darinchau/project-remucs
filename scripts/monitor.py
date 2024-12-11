@@ -7,7 +7,7 @@ import time
 base_dir = "./resources/models/vqvae"
 FILE_LIMIT = 15
 
-a = sys.argv[1]
+a = int(sys.argv[1])
 while True:
     time.sleep(10)
     if len(os.listdir(base_dir)) < FILE_LIMIT:
