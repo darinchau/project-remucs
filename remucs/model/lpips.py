@@ -156,3 +156,11 @@ class NetLinLayer(nn.Module):
     def forward(self, x):
         out = self.model(x)
         return out
+
+def load_lpips(mean: tuple[float, ...] = (0.1885, 0.1751, 0.1698, 0.0800), std: tuple[float, ...] = (0.1164, 0.1066, 0.1065, 0.0672), use_dropout: bool = True) -> LPIPS:
+    """ Load the LPIPS model with the given means and stds. The default is calculated over the whole training + val set """
+    return LPIPS(
+        means = list(mean),
+        stds = list(std),
+        use_dropout = use_dropout
+    )

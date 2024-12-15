@@ -22,7 +22,7 @@ class SpectrogramDataset(Dataset):
     load_first_n can be set to load only n files. If set to -1, all files are loaded.
 
     This implicitly assumes (512, 512) resolution and VDIB parts."""
-    def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1):
+    def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1, lookup_table_path: str | None = None):
         def load(path: str, bars: list[tuple[PartIDType, int]] | None = None):
             # Reading the whole thing is slow D: so let's only read the metadata
             if bars is None:
@@ -35,9 +35,13 @@ class SpectrogramDataset(Dataset):
         # Check for lookup table
         files = sorted(os.listdir(dataset_dir))
 
-        if "lookup_table.json" in files:
-            with open(os.path.join(dataset_dir, "lookup_table.json"), "r") as f:
-                lookup_table = json.load(f)
+        if "lookup_table.json" in files or lookup_table_path is not None:
+            if lookup_table_path is not None:
+                with open(lookup_table_path, "r") as f:
+                    lookup_table = json.load(f)
+            else:
+                with open(os.path.join(dataset_dir, "lookup_table.json"), "r") as f:
+                    lookup_table = json.load(f)
             collection = [(os.path.join(dataset_dir, x), lookup_table[x]) for x in lookup_table if x in files]
             if load_first_n >= 0:
                 collection = collection[:load_first_n]
@@ -210,3 +214,30 @@ def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: st
     data = torch.stack(tensors)
     # Return shape: 4, 2, H, W (should be 512, 512)
     return data
+
+def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
+                 credentials_path: str | None = None, bucket_name: str | None = None, cache_dir: str | None = None,
+                 nbars: int = 4) -> SpectrogramDataset | SpectrogramDatasetFromCloud:
+    """Loads a dataset from a local directory or a Google Cloud Storage bucket
+    if credentials_path and bucket_name are provided, loads from the Google Cloud Storage,
+    and local_dataset_dir functions as the default spectrogram directory.
+    Otherwise, loads from the local directory.
+    """
+    if credentials_path is not None and bucket_name is not None:
+        if cache_dir is None:
+            cache_dir = tempfile.mkdtemp()
+        return SpectrogramDatasetFromCloud(
+            lookup_table_path=lookup_table_path,
+            default_specs=SpectrogramDataset(dataset_dir = local_dataset_dir, num_workers=0, load_first_n=10),
+            credentials_path=credentials_path,
+            bucket_name=bucket_name,
+            cache_dir=cache_dir,
+            nbars = nbars
+        )
+    return SpectrogramDataset(
+        dataset_dir=local_dataset_dir,
+        nbars=nbars,
+        num_workers=4,
+        load_first_n=-1,
+        lookup_table_path=lookup_table_path
+    )

@@ -18,21 +18,24 @@ def upload_files(bucket_name, source_folder, credentials_path):
         with open(UPLOADED_FILES, "w") as f:
             f.write("")
 
+    root_files = [blob.name for blob in bucket.list_blobs() if '/' not in blob.name]
+    root_files = set(root_files)
+    print(f"Found {len(root_files)} files in the bucket")
+
     files = os.listdir(source_folder)
     for file_name in tqdm(files):
         try:
-            with open(UPLOADED_FILES, "r") as f:
-                uploaded_files = f.read().splitlines()
-            if file_name in uploaded_files:
+            if file_name in root_files:
                 print(f"{file_name} already uploaded. Skipping...")
                 continue
             local_path = os.path.join(source_folder, file_name)
             if os.path.isfile(local_path):
                 blob = bucket.blob(file_name)
+                if blob.name in root_files:
+                    tqdm.write(f"{file_name} already exists in the bucket. Skipping...")
+                    continue
                 blob.upload_from_filename(local_path)
                 tqdm.write(f"Uploaded {file_name} to {bucket_name}")
-                with open(UPLOADED_FILES, "a") as f:
-                    f.write(f"{file_name}\n")
         except Exception as e:
             print(f"Error uploading {file_name}: {e}")
 

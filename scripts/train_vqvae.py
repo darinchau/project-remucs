@@ -18,8 +18,8 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.model import VQVAE, VQVAEConfig
-from remucs.model.lpips import LPIPS
-from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
+from remucs.model.lpips import load_lpips
+from remucs.dataset import load_dataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -100,15 +100,14 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
         return
 
     # Create the dataset
-    im_dataset = SpectrogramDatasetFromCloud(
+    im_dataset = load_dataset(
         lookup_table_path=dataset_config["lookup_table_path"],
-        default_specs=SpectrogramDataset(dataset_dir = dataset_dir, num_workers=0, load_first_n=10),
+        local_dataset_dir=dataset_dir,
         credentials_path=dataset_config["credentials_path"],
         bucket_name=dataset_config["bucket_name"],
         cache_dir=dataset_config["cache_dir"],
-        nbars = dataset_config["nbars"],
+        nbars=dataset_config["nbars"],
     )
-
 
     print('Dataset size: {}'.format(len(im_dataset)))
 
@@ -126,10 +125,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
     # TODO: Can try BCE with logits loss for discriminator???
     reconstruction_loss = torch.nn.MSELoss()
     discriminator_loss = torch.nn.MSELoss()
-    perceptual_loss = LPIPS(
-        means = [0.1885, 0.1751, 0.1698, 0.0800],
-        stds = [0.1164, 0.1066, 0.1065, 0.0672]
-    ).eval().to(device)
+    perceptual_loss = load_lpips().eval().to(device)
 
     # Freeze perceptual loss parameters
     for param in perceptual_loss.parameters():
