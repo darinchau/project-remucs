@@ -5,10 +5,14 @@ import sys
 import time
 
 base_dir = "./resources/models/vqvae"
-FILE_LIMIT = 15
+FILE_LIMIT = 10
 
 def main():
-    a = int(sys.argv[1])
+    try:
+        a = int(sys.argv[1])
+    except Exception as e:
+        raise ValueError("Please specify a value to start monitoring")
+    print(f"Starting with a = {a}")
     while True:
         time.sleep(10)
         if len(os.listdir(base_dir)) < FILE_LIMIT:

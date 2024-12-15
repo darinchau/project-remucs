@@ -11,6 +11,8 @@ dataset_params:
   bucket_name: "project-remucs-spectrograms-1"
   cache_dir: "./resources/spec_cache"
   val_count: 200 # Number of validation samples
+  backup_dataset_first_n_train: 10
+  backup_dataset_first_n_val: 3
 
 autoencoder_params:
   z_channels: 4
@@ -35,11 +37,11 @@ train_params:
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
   perceptual_weight: 1
-  epochs: 20
+  epochs: 2
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
   max_allowed_ckpts: 32
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
-  val_steps: 2048
+  val_steps: 10

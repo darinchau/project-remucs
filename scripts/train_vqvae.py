@@ -107,6 +107,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
         bucket_name=dataset_config["bucket_name"],
         cache_dir=dataset_config["cache_dir"],
         nbars=dataset_config["nbars"],
+        backup_dataset_first_n=dataset_config["backup_dataset_first_n_train"]
     )
 
     val_dataset = load_dataset(
@@ -116,6 +117,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
         bucket_name=dataset_config["bucket_name"],
         cache_dir=dataset_config["cache_dir"],
         nbars=dataset_config["nbars"],
+        backup_dataset_first_n=dataset_config["backup_dataset_first_n_val"]
     )
 
     print('Dataset size: {}'.format(len(im_dataset)))
@@ -186,7 +188,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="vqvae_training",
+        project="vqvae_training-2",
         config=config
     )
 
@@ -303,7 +305,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                     val_recon_losses = []
                     val_perceptual_losses = []
                     val_codebook_losses = []
-                    for val_im in val_data_loader:
+                    for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})"):
                         val_count_ += 1
                         if val_count_ > val_count:
                             break

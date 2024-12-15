@@ -217,6 +217,7 @@ def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: st
 
 def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
                  credentials_path: str | None = None, bucket_name: str | None = None, cache_dir: str | None = None,
+                 backup_dataset_first_n: int | None = None,
                  nbars: int = 4) -> SpectrogramDataset | SpectrogramDatasetFromCloud:
     """Loads a dataset from a local directory or a Google Cloud Storage bucket
     if credentials_path and bucket_name are provided, loads from the Google Cloud Storage,
@@ -228,7 +229,7 @@ def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
             cache_dir = tempfile.mkdtemp()
         return SpectrogramDatasetFromCloud(
             lookup_table_path=lookup_table_path,
-            default_specs=SpectrogramDataset(dataset_dir = local_dataset_dir, num_workers=0, load_first_n=10),
+            default_specs=SpectrogramDataset(dataset_dir = local_dataset_dir, num_workers=0, load_first_n=backup_dataset_first_n),
             credentials_path=credentials_path,
             bucket_name=bucket_name,
             cache_dir=cache_dir,
