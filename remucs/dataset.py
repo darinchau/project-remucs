@@ -137,14 +137,19 @@ class SpectrogramDatasetFromCloud(Dataset):
         while size > self.size_limit:
             # Sort by last accessed
             to_remove = min(self.cache.items(), key=lambda x: x[1])
+            to_remove_fp = os.path.join(self.cache_dir, to_remove[0])
+            if not os.path.exists(to_remove_fp):
+                del self.cache[to_remove[0]]
+                continue
+
             try:
-                file_size = os.path.getsize(os.path.join(self.cache_dir, to_remove[0]))
+                file_size = os.path.getsize()
                 os.remove(os.path.join(self.cache_dir, to_remove[0]))
+                size -= file_size
+                del self.cache[to_remove[0]]
             except Exception as e:
                 print(f"An error occurred: {e}")
                 self._to_delete.append(to_remove[0])
-            size -= file_size
-            del self.cache[to_remove[0]]
 
     def __getitem__(self, idx):
         def load_from_drive(file_name: str):
