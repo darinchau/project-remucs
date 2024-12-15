@@ -305,7 +305,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                     val_recon_losses = []
                     val_perceptual_losses = []
                     val_codebook_losses = []
-                    for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})"):
+                    for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})", total=min(val_count, len(val_data_loader))):
                         val_count_ += 1
                         if val_count_ > val_count:
                             break
@@ -322,12 +322,13 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
                         val_codebook_losses.append(val_quantize_losses['codebook_loss'].item())
 
-                    wandb.log({
-                        "Val Reconstruction Loss": np.mean(val_recon_losses),
-                        "Val Perceptual Loss": np.mean(val_perceptual_losses),
-                        "Val Codebook Loss": np.mean(val_codebook_losses)
-                    }, step=step_count)
+                wandb.log({
+                    "Val Reconstruction Loss": np.mean(val_recon_losses),
+                    "Val Perceptual Loss": np.mean(val_perceptual_losses),
+                    "Val Codebook Loss": np.mean(val_codebook_losses)
+                }, step=step_count)
 
+                tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
                 model.train()
 
         # End of epoch. Clean up the gradients and losses and save the model

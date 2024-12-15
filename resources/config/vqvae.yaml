@@ -44,4 +44,4 @@ train_params:
   max_allowed_ckpts: 32
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
-  val_steps: 10
+  val_steps: 2048
