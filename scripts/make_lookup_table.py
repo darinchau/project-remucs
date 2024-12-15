@@ -30,7 +30,7 @@ def make_lookup_table(dataset_dir: str, nbars: int = 4, load_first_n: int = -1, 
 
     if load_first_n >= 0:
         files = files[:load_first_n]
-    collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files)]
+    collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files) if x.endswith(".spec.zip")]
     collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
 
     lookup_table = {}
@@ -40,6 +40,11 @@ def make_lookup_table(dataset_dir: str, nbars: int = 4, load_first_n: int = -1, 
     return lookup_table
 
 if __name__ == "__main__":
-    lookup_table = make_lookup_table("D:/Repository/project-remucs/audio-infos-v3/spectrograms", nbars=4, uploaded_files_path="./resources/dataset/uploaded_files.txt")
-    with open("./resources/lookup_table.json", "w") as f:
+    dataset_path = "D:/Repository/project-remucs/audio-infos-v3/spectrograms"
+    uploaded_files_path = "./resources/dataset/train_data.txt"
+    lookup_table_path = "./resources/lookup_table_train.json"
+    lookup_table = make_lookup_table(dataset_path, uploaded_files_path=uploaded_files_path)
+    with open(lookup_table_path, "w") as f:
         json.dump(lookup_table, f)
+    print(f"Dataset length: {sum(len(x) for x in lookup_table.values())}")
+    print(f"Lookup table saved to {lookup_table_path}")

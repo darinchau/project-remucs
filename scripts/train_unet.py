@@ -1,5 +1,4 @@
 # Modified from https://github.com/zyinghua/uncond-image-generation-ldm/blob/main/src/pipeline.py
-import argparse
 import inspect
 import logging
 import math
@@ -7,6 +6,8 @@ import os
 import shutil
 from datetime import timedelta
 from pathlib import Path
+from dataclasses import dataclass
+import yaml
 
 import accelerate
 import datasets
@@ -20,14 +21,20 @@ from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from torchvision import transforms
 from tqdm.auto import tqdm
+from torch.utils.data import DataLoader
+from torch.optim.adamw import AdamW
 
 import diffusers
-from diffusers import DDPMScheduler, UNet2DModel, Pipelin
+from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel #type: ignore
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
-from diffusers.utils import check_min_version, is_accelerate_version, is_tensorboard_available, is_wandb_available
+from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
 
+from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
+from remucs.model import VQVAE, VQVAEConfig
+
+import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -40,189 +47,75 @@ logger = get_logger(__name__, log_level="INFO")
 # Don't ask me how this value was derived, I have no idea D:
 VAE_SCALING_FACTOR = 0.18215
 
-def _extract_into_tensor(arr, timesteps, broadcast_shape):
-    """
-    Extract values from a 1-D numpy array for a batch of indices.
+# Add typing to the arguments
+class TrainingConfig:
+    output_dir: str
+    train_batch_size: int
+    eval_batch_size: int
+    dataloader_num_workers: int
+    num_epochs: int
+    save_model_epochs: int
+    gradient_accumulation_steps: int
+    learning_rate: float
+    lr_scheduler: str
+    lr_warmup_steps: int
+    adam_beta1: float
+    adam_beta2: float
+    adam_weight_decay: float
+    adam_epsilon: float
+    use_ema: bool
+    ema_inv_gamma: float
+    ema_power: float
+    ema_max_decay: float
+    logger: str
+    logging_dir: str
+    local_rank: int
+    mixed_precision: str
+    checkpointing_steps: int
+    checkpoints_total_limit: int
+    resume_from_checkpoint: str | None
+    enable_xformers_memory_efficient_attention: bool
+    acc_seed: int
 
-    :param arr: the 1-D numpy array.
-    :param timesteps: a tensor of indices into the array to extract.
-    :param broadcast_shape: a larger shape of K dimensions with the batch
-                            dimension equal to the length of timesteps.
-    :return: a tensor of shape [batch_size, 1, ...] where the shape has K dims.
-    """
-    if not isinstance(arr, torch.Tensor):
-        arr = torch.from_numpy(arr)
-    res = arr[timesteps].float().to(timesteps.device)
-    while len(res.shape) < len(broadcast_shape):
-        res = res[..., None]
-    return res.expand(broadcast_shape)
+    # Dataset params
+    lookup_table_path: str # Path to the cloud dataset lookup table
+    credentials_path: str # Path to the cloud credentials
+    bucket_name: str # Name of the google cloud bucket for the big dataset
+    cache_dir: str # Directory for storing the cache
+    nbars: int
+    dataset_dir: str # The dir for the local batch
 
-def load_vae():
-    # Loads the VAE model.
-    # Implement later...
-    raise NotImplementedError
+    vae_ckpt_path: str # Path to the VAE checkpoint dir
+    im_channels: int # Number of channels in our image (for VQVAE, it is your responsibility to make sure VQVAE dims == DDPM dims)
+    vae_config: dict
+
+def parse_args(path = "./resources/config/unet.yaml"):
+    with open(path, "r") as f:
+        config = yaml.safe_load(f)
+    return TrainingConfig(**config)
+
+def load_vae(args: TrainingConfig, device):
+    vae_config = VQVAEConfig(**args.vae_config)
+    model = VQVAE(im_channels=args.im_channels, model_config=vae_config).to(device)
+    return model
 
 def load_unet_model():
     # Loads the UNet model and scheduler.
     # Implement later...
     raise NotImplementedError
 
-def load_train_dataset():
-    # Loads the training dataset.
-    # Can be from hugging face library or torch.utils.data.Dataset
-    # Has to be compatbible with Dataloader
-    # Implement later...
-    raise NotImplementedError
+def load_train_dataset(args: TrainingConfig):
+    im_dataset = SpectrogramDatasetFromCloud(
+        lookup_table_path=args.lookup_table_path,
+        default_specs=SpectrogramDataset(dataset_dir=args.dataset_dir, num_workers=0, load_first_n=10),
+        credentials_path=args.credentials_path,
+        bucket_name=args.bucket_name,
+        cache_dir=args.cache_dir,
+        nbars=args.nbars,
+    )
+    return im_dataset
 
-def parse_args():
-    parser = argparse.ArgumentParser(description="Simple example of a training script.")
-    parser.add_argument(
-        "--output_dir",
-        type=str,
-        default="ddpm-model-256",
-        help="The output directory where the model predictions and checkpoints will be written.",
-    )
-    parser.add_argument(
-        "--train_batch_size", type=int, default=16, help="Batch size (per device) for the training dataloader."
-    )
-    parser.add_argument(
-        "--eval_batch_size", type=int, default=16, help="The number of images to generate for evaluation."
-    )
-    parser.add_argument(
-        "--dataloader_num_workers",
-        type=int,
-        default=0,
-        help=(
-            "The number of subprocesses to use for data loading. 0 means that the data will be loaded in the main"
-            " process."
-        ),
-    )
-    parser.add_argument("--num_epochs", type=int, default=150)
-    parser.add_argument(
-        "--save_model_epochs", type=int, default=10, help="How often to save the model during training."
-    )
-    parser.add_argument(
-        "--gradient_accumulation_steps",
-        type=int,
-        default=1,
-        help="Number of updates steps to accumulate before performing a backward/update pass.",
-    )
-    parser.add_argument(
-        "--learning_rate",
-        type=float,
-        default=1e-4,
-        help="Initial learning rate (after the potential warmup period) to use.",
-    )
-    parser.add_argument(
-        "--lr_scheduler",
-        type=str,
-        default="cosine",
-        help=(
-            'The scheduler type to use. Choose between ["linear", "cosine", "cosine_with_restarts", "polynomial",'
-            ' "constant", "constant_with_warmup"]'
-        ),
-    )
-    parser.add_argument(
-        "--lr_warmup_steps", type=int, default=500, help="Number of steps for the warmup in the lr scheduler."
-    )
-    parser.add_argument("--adam_beta1", type=float, default=0.95, help="The beta1 parameter for the Adam optimizer.")
-    parser.add_argument("--adam_beta2", type=float, default=0.999, help="The beta2 parameter for the Adam optimizer.")
-    parser.add_argument(
-        "--adam_weight_decay", type=float, default=1e-6, help="Weight decay magnitude for the Adam optimizer."
-    )
-    parser.add_argument("--adam_epsilon", type=float, default=1e-08, help="Epsilon value for the Adam optimizer.")
-    parser.add_argument(
-        "--use_ema",
-        action="store_true",
-        help="Whether to use Exponential Moving Average for the final model weights.",
-    )
-    parser.add_argument("--ema_inv_gamma", type=float, default=1.0, help="The inverse gamma value for the EMA decay.")
-    parser.add_argument("--ema_power", type=float, default=3 / 4, help="The power value for the EMA decay.")
-    parser.add_argument("--ema_max_decay", type=float, default=0.9999, help="The maximum decay magnitude for EMA.")
-    parser.add_argument("--push_to_hub", action="store_true", help="Whether or not to push the model to the Hub.")
-    parser.add_argument("--hub_token", type=str, default=None, help="The token to use to push to the Model Hub.")
-    parser.add_argument(
-        "--hub_model_id",
-        type=str,
-        default=None,
-        help="The name of the repository to keep in sync with the local `output_dir`.",
-    )
-    parser.add_argument(
-        "--hub_private_repo", action="store_true", help="Whether or not to create a private repository."
-    )
-    parser.add_argument(
-        "--logger",
-        type=str,
-        default="tensorboard",
-        choices=["tensorboard", "wandb"],
-        help=(
-            "Whether to use [tensorboard](https://www.tensorflow.org/tensorboard) or [wandb](https://www.wandb.ai)"
-            " for experiment tracking and logging of model metrics and model checkpoints"
-        ),
-    )
-    parser.add_argument(
-        "--logging_dir",
-        type=str,
-        default="logs",
-        help=(
-            "[TensorBoard](https://www.tensorflow.org/tensorboard) log directory. Will default to"
-            " *output_dir/runs/**CURRENT_DATETIME_HOSTNAME***."
-        ),
-    )
-    parser.add_argument("--local_rank", type=int, default=-1, help="For distributed training: local_rank")
-    parser.add_argument(
-        "--mixed_precision",
-        type=str,
-        default="no",
-        choices=["no", "fp16", "bf16"],
-        help=(
-            "Whether to use mixed precision. Choose"
-            "between fp16 and bf16 (bfloat16). Bf16 requires PyTorch >= 1.10."
-            "and an Nvidia Ampere GPU."
-        ),
-    )
-    parser.add_argument(
-        "--checkpointing_steps",
-        type=int,
-        default=500,
-        help=(
-            "Save a checkpoint of the training state every X updates. These checkpoints are only suitable for resuming"
-            " training using `--resume_from_checkpoint`."
-        ),
-    )
-    parser.add_argument(
-        "--checkpoints_total_limit",
-        type=int,
-        default=5,
-        help=("Max number of checkpoints to store."),
-    )
-    parser.add_argument(
-        "--resume_from_checkpoint",
-        type=str,
-        default=None,
-        help=(
-            "Whether training should be resumed from a previous checkpoint. Use a path saved by"
-            ' `--checkpointing_steps`, or `"latest"` to automatically select the last available checkpoint.'
-        ),
-    )
-    parser.add_argument(
-        "--enable_xformers_memory_efficient_attention", action="store_true", help="Whether or not to use xformers."
-    )
-    parser.add_argument(
-        "--acc_seed",
-        type=int,
-        default=1943,
-        help="A seed to reproduce the training. If not set, the seed will be random.",
-    )
-
-    args = parser.parse_args()
-    env_local_rank = int(os.environ.get("LOCAL_RANK", -1))
-    if env_local_rank != -1 and env_local_rank != args.local_rank:
-        args.local_rank = env_local_rank
-
-    return args
-
-def main(args):
+def main(args: TrainingConfig):
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
@@ -235,53 +128,8 @@ def main(args):
         kwargs_handlers=[kwargs],
     )
 
-    if args.logger == "tensorboard":
-        if not is_tensorboard_available():
-            raise ImportError("Make sure to install tensorboard if you want to use it for logging during training.")
-
-    elif args.logger == "wandb":
-        if not is_wandb_available():
-            raise ImportError("Make sure to install wandb if you want to use it for logging during training.")
-        import wandb
-
-    # Set the random seed manually for reproducibility.
     if args.acc_seed is not None:
         set_seed(args.acc_seed)
-
-    # `accelerate` 0.16.0 will have better support for customized saving
-    if version.parse(accelerate.__version__) >= version.parse("0.16.0"):
-        # create custom saving & loading hooks so that `accelerator.save_state(...)` serializes in a nice format
-        def save_model_hook(models, weights, output_dir):
-            if accelerator.is_main_process:
-                if args.use_ema:
-                    ema_model.save_pretrained(os.path.join(output_dir, "unet_ema"))
-
-                for i, model in enumerate(models):
-                    model.save_pretrained(os.path.join(output_dir, "unet"))
-
-                    # make sure to pop weight so that corresponding model is not saved again
-                    weights.pop()
-
-        def load_model_hook(models, input_dir):
-            if args.use_ema:
-                load_model = EMAModel.from_pretrained(os.path.join(input_dir, "unet_ema"), UNet2DModel)
-                ema_model.load_state_dict(load_model.state_dict())
-                ema_model.to(accelerator.device)
-                del load_model
-
-            for i in range(len(models)):
-                # pop models so that they are not loaded again
-                model = models.pop()
-
-                # load diffusers style into model
-                load_model = UNet2DModel.from_pretrained(input_dir, subfolder="unet")
-                model.register_to_config(**load_model.config)
-
-                model.load_state_dict(load_model.state_dict())
-                del load_model
-
-        accelerator.register_save_state_pre_hook(save_model_hook)
-        accelerator.register_load_state_pre_hook(load_model_hook)
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -302,13 +150,8 @@ def main(args):
         if args.output_dir is not None:
             os.makedirs(args.output_dir, exist_ok=True)
 
-        if args.push_to_hub:
-            repo_id = create_repo(
-                repo_id=args.hub_model_id or Path(args.output_dir).name, exist_ok=True, token=args.hub_token
-            ).repo_id
-
     # Load pretrained VAE model
-    vae = load_vae()
+    vae = load_vae(args, accelerator.device)
     vae.requires_grad_(False)
 
     # Initialize the model
@@ -348,7 +191,7 @@ def main(args):
             raise ValueError("xformers is not available. Make sure it is installed correctly")
 
     # Initialize the optimizer
-    optimizer = torch.optim.AdamW(
+    optimizer = AdamW(
         model.parameters(),
         lr=args.learning_rate,
         betas=(args.adam_beta1, args.adam_beta2),
@@ -356,16 +199,13 @@ def main(args):
         eps=args.adam_epsilon,
     )
 
-    # Get the datasets: you can either provide your own training and evaluation files (see below)
-    # or specify a Dataset from the hub (the dataset will be downloaded automatically from the datasets Hub).
-
     # In distributed training, the load_dataset function guarantees that only one local process can concurrently
     # download the dataset.
-    dataset = load_train_dataset()
+    dataset = load_train_dataset(args)
 
     logger.info(f"Dataset size: {len(dataset)}")
 
-    train_dataloader = torch.utils.data.DataLoader(
+    train_dataloader = DataLoader(
         dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=args.dataloader_num_workers
     )
 
@@ -429,9 +269,7 @@ def main(args):
             accelerator.load_state(os.path.join(args.output_dir, path))
             global_step = int(path.split("-")[1])
 
-            resume_global_step = global_step * args.gradient_accumulation_steps
             first_epoch = global_step // num_update_steps_per_epoch
-            resume_step = resume_global_step % (num_update_steps_per_epoch * args.gradient_accumulation_steps)
 
     # Train!
     for epoch in range(first_epoch, args.num_epochs):
@@ -439,22 +277,15 @@ def main(args):
         progress_bar = tqdm(total=num_update_steps_per_epoch, disable=not accelerator.is_local_main_process)
         progress_bar.set_description(f"Epoch {epoch}")
         for step, batch in enumerate(train_dataloader):
-            # Skip steps until we reach the resumed step
-            if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
-                if step % args.gradient_accumulation_steps == 0:
-                    progress_bar.update(1)
-                continue
-
             clean_images = batch["input"].to(weight_dtype)
-            latents = vae.encode(clean_images).latents
+            latents, _ = vae.encode(clean_images)
             latents = latents * VAE_SCALING_FACTOR # vae.config.scaling_factor
 
             # Sample noise that we'll add to the images
             noise = torch.randn(latents.shape, dtype=weight_dtype, device=latents.device)
-            bsz = latents.shape[0]  # batch size
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (bsz,), device=clean_images.device
+                0, noise_scheduler.config.num_train_timesteps, (latents.shape[0],), device=clean_images.device
             ).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
@@ -528,22 +359,15 @@ def main(args):
                     ema_model.store(unet.parameters())
                     ema_model.copy_to(unet.parameters())
 
-                # Package the model into a folder
-                raise NotImplementedError
+                # Save the unet
+                unet_path = os.path.join(args.output_dir, f"unet-{epoch}.pt")
+                torch.save(unet.state_dict(), unet_path)
+                logger.info(f"Saved UNet model to {unet_path}")
 
                 if args.use_ema:
                     ema_model.restore(unet.parameters())
 
-                if args.push_to_hub:
-                    upload_folder(
-                        repo_id=repo_id,
-                        folder_path=args.output_dir,
-                        commit_message=f"Epoch {epoch}",
-                        ignore_patterns=["step_*", "epoch_*"],
-                    )
-
     accelerator.end_training()
 
 if __name__ == "__main__":
-    args = parse_args()
-    main(args)
+    main(parse_args())
