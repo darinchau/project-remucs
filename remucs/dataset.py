@@ -173,7 +173,10 @@ class SpectrogramDatasetFromCloud(Dataset):
             default_idx = random.randint(0, len(self.default_specs_loaded) - 1)
             return self.default_specs_loaded[default_idx]
 
-        self.clear_cache()
+        try:
+            self.clear_cache()
+        except Exception as e:
+            print(f"An error occured while clearing cache: {e}")
         return process_spectrogram(s, bar, self.nbars, path)
 
 def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
