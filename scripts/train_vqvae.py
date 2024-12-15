@@ -101,7 +101,16 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     # Create the dataset
     im_dataset = load_dataset(
-        lookup_table_path=dataset_config["lookup_table_path"],
+        lookup_table_path=dataset_config["train_lookup_table_path"],
+        local_dataset_dir=dataset_dir,
+        credentials_path=dataset_config["credentials_path"],
+        bucket_name=dataset_config["bucket_name"],
+        cache_dir=dataset_config["cache_dir"],
+        nbars=dataset_config["nbars"],
+    )
+
+    val_dataset = load_dataset(
+        lookup_table_path=dataset_config["val_lookup_table_path"],
         local_dataset_dir=dataset_dir,
         credentials_path=dataset_config["credentials_path"],
         bucket_name=dataset_config["bucket_name"],
@@ -114,7 +123,14 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
     data_loader = DataLoader(im_dataset,
                              batch_size=train_config['autoencoder_batch_size'],
                              num_workers=train_config['num_workers_dl'],
-                             shuffle=False) # Bad machine learning practice but saves so much on my cloud bill
+                             shuffle=False) # Bad machine learning practice but saves so much on my cloud bill + the loaded dataset is essentially random
+
+    val_data_loader = DataLoader(val_dataset,
+                                 batch_size=train_config['autoencoder_batch_size'],
+                                 num_workers=train_config['num_workers_dl'],
+                                 shuffle=False)
+
+    val_count = dataset_config['val_count']
 
     # Create output directories
     if not os.path.exists(base_dir):
@@ -155,6 +171,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
     saved_vaes = []
     saved_discs = []
     max_allowed_ckpts = train_config["max_allowed_ckpts"]
+
+    val_steps = train_config['val_steps']
 
     # Reload checkpoint
     if start_from_iter > 0:
@@ -276,6 +294,39 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 "Generator Loss": gen_losses[-1] if gen_losses else 0,
                 "Discriminator Loss": disc_losses[-1] if disc_losses else 0
             }, step=step_count)
+
+            ########### Perform Validation #############
+            val_count_ = 0
+            if step_count % val_steps == 0:
+                model.eval()
+                with torch.no_grad():
+                    val_recon_losses = []
+                    val_perceptual_losses = []
+                    val_codebook_losses = []
+                    for val_im in val_data_loader:
+                        val_count_ += 1
+                        if val_count_ > val_count:
+                            break
+                        val_im = val_im.float().to(device)
+                        val_im = val_im[:, :, 0]
+                        val_model_output = model(val_im)
+                        val_output, _, val_quantize_losses = val_model_output
+
+                        val_recon_loss = reconstruction_loss(val_output, val_im)
+                        val_recon_losses.append(val_recon_loss.item())
+
+                        val_lpips_loss = torch.mean(perceptual_loss(val_output, val_im))
+                        val_perceptual_losses.append(val_lpips_loss.item())
+
+                        val_codebook_losses.append(val_quantize_losses['codebook_loss'].item())
+
+                    wandb.log({
+                        "Val Reconstruction Loss": np.mean(val_recon_losses),
+                        "Val Perceptual Loss": np.mean(val_perceptual_losses),
+                        "Val Codebook Loss": np.mean(val_codebook_losses)
+                    }, step=step_count)
+
+                model.train()
 
         # End of epoch. Clean up the gradients and losses and save the model
         optimizer_d.step()

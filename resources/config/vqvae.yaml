@@ -5,10 +5,12 @@ dataset_params:
   im_channels : 4
   im_size : 512
   num_workers_ds : 0 # Number of workers for loading the dataset
-  lookup_table_path: "./resources/lookup_table.json"
+  train_lookup_table_path: "./resources/lookup_table_train.json"
+  val_lookup_table_path: "./resources/lookup_table_val.json"
   credentials_path: "./resources/key/key.json"
   bucket_name: "project-remucs-spectrograms-1"
   cache_dir: "./resources/spec_cache"
+  val_count: 1000 # Number of validation samples
 
 autoencoder_params:
   z_channels: 4
@@ -40,3 +42,4 @@ train_params:
   max_allowed_ckpts: 32
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
+  val_steps: 4096
