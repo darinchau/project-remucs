@@ -188,7 +188,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="vqvae_training-2",
+        project="vqvae_training-3",
         config=config
     )
 
@@ -216,7 +216,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
             output, z, quantize_losses = model_output
 
             # Save the model
-            if step_count % image_save_steps == 0 or step_count == 1:
+            if step_count % image_save_steps == 0:
                 model_save_path = os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
                 disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
                 torch.save(model.state_dict(), model_save_path)
@@ -256,7 +256,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
 
             # Perceptual Loss
-            lpips_loss = torch.mean(perceptual_loss(output, im)) / acc_steps
+            lpips_loss = torch.mean(perceptual_loss(output, im))
             perceptual_losses.append(train_config['perceptual_weight'] * lpips_loss.item())
             g_loss += train_config['perceptual_weight']*lpips_loss / acc_steps
 
