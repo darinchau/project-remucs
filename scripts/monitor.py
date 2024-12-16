@@ -27,7 +27,7 @@ def main():
             os.remove(discr)
         except Exception as e:
             print(e)
-        a += 1
+        a += 512
 
 if __name__ == "__main__":
     main()

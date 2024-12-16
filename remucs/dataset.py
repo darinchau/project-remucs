@@ -143,7 +143,7 @@ class SpectrogramDatasetFromCloud(Dataset):
                 continue
 
             try:
-                file_size = os.path.getsize()
+                file_size = os.path.getsize(to_remove_fp)
                 os.remove(os.path.join(self.cache_dir, to_remove[0]))
                 size -= file_size
                 del self.cache[to_remove[0]]
