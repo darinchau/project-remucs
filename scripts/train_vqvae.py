@@ -178,10 +178,10 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     # Reload checkpoint
     if start_from_iter > 0:
-        model_save_path = os.path.join(base_dir, f"vqvae_epoch_0_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        model_save_path = os.path.join(base_dir, f"vqvae_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
         model_sd = torch.load(model_save_path)
         model.load_state_dict(model_sd)
-        disc_save_path = os.path.join(base_dir, f"discriminator_epoch_0_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        disc_save_path = os.path.join(base_dir, f"discriminator_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
         disc_sd = torch.load(disc_save_path)
         discriminator.load_state_dict(disc_sd)
         step_count = start_from_iter
@@ -208,7 +208,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
             im = im.float().to(device)
 
             # im is (4, 4, 2, 512, 512) -> take only the magnitude
-            im = im.sum(dim=2)
+            im = im.mean(dim=2)
 
             # Fetch autoencoders output(reconstructions)
             with autocast('cuda'):
@@ -217,8 +217,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
             # Save the model
             if step_count % image_save_steps == 0:
-                model_save_path = os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-                disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+                model_save_path = os.path.join(base_dir, f"vqvae_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+                disc_save_path = os.path.join(base_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
                 torch.save(model.state_dict(), model_save_path)
                 torch.save(discriminator.state_dict(), disc_save_path)
                 saved_vaes.append(model_save_path)
