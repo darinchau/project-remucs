@@ -77,7 +77,9 @@ class SpectrogramDatasetFromCloud(Dataset):
     - default_specs_dir is the directory containing the default spectrograms
     - Implements a LRU cache to store the spectrograms in memory
     """
-    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset, credentials_path: str, bucket_name: str, cache_dir: str, nbars: int = 4, size_limit_mb: int = 16384):
+    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset,
+                 credentials_path: str, bucket_name: str, cache_dir: str, nbars: int = 4, size_limit_mb: int = 16384,
+                 load_first_n_dataset: int = -1):
         # Confirm google cloud storage is installed
         try:
             import google.cloud.storage
@@ -96,6 +98,8 @@ class SpectrogramDatasetFromCloud(Dataset):
         with open(lookup_table_path, "r") as f:
             lookup_table = json.load(f)
         collection = [(x, lookup_table[x]) for x in lookup_table]
+        if load_first_n_dataset >= 0:
+            collection = collection[:load_first_n_dataset]
         self.path_bar = []
         for path, bars in collection:
             for bar in bars:
