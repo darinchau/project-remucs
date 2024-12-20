@@ -41,9 +41,10 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 def save_vae_output_to_audio(sample_prefix: str, images: Tensor):
+    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format"
     specs = SpectrogramCollection(
         target_width=TARGET_FEATURES,
-        target_height=128,
+        target_height=TARGET_FEATURES,
         sample_rate=TARGET_SR,
         hop_length=512,
         n_fft=NFFT,
@@ -53,12 +54,11 @@ def save_vae_output_to_audio(sample_prefix: str, images: Tensor):
         format="png",
     )
 
-    # images is shape (1, 4, 512, 512)
-    images = images[0]
-
+    # images is shape (4, 512, 512)
     # Abuse the decode function by pretending we are an audio with 4 channels
+    # TARGET_NFRAMES * 4 is the number of frames we want to generate since we have 4 bars
     for im, part in zip(images, "VDIB"):
-        audio = specs.spectrogram_to_audio(images, nframes = TARGET_NFRAMES)
+        audio = specs.spectrogram_to_audio(im[None], nframes = TARGET_NFRAMES * 4)
         audio.save(f"{sample_prefix}{part}.wav")
 
 def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32):
@@ -109,6 +109,8 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
 
     reconstruction_idxs = random.sample(range(len(im_dataset)), k=reconstructions)
 
+    print("Reconstructing: ", reconstruction_idxs)
+
     with torch.no_grad():
         for i, im in tqdm(enumerate(data_loader), total=len(data_loader)):
             im = im.float().to(device)
@@ -138,8 +140,8 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                     output = output[j].detach().cpu()
                     im = im[j].detach().cpu()
 
-                    save_vae_output_to_audio(f"recn{i}_", output)
-                    save_vae_output_to_audio(f"orig{i}_", im)
+                    save_vae_output_to_audio(f"recn{i * batch_size + j}_", output)
+                    save_vae_output_to_audio(f"orig{i * batch_size + j}_", im)
 
     print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f}'
             .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses)))
