@@ -38,6 +38,8 @@ from diffusers.utils.torch_utils import randn_tensor
 from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
 from remucs.model.vae import VQVAE, VQVAEConfig
 
+from .calculate import SpectrogramCollection, TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
+
 import wandb
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
@@ -76,7 +78,7 @@ class TrainingConfig:
     eval_batch_size: int
     dataloader_num_workers: int
     num_epochs: int
-    save_model_epochs: int
+    save_model_steps: int
     gradient_accumulation_steps: int
     learning_rate: float
     lr_scheduler: str
@@ -100,12 +102,14 @@ class TrainingConfig:
     acc_seed: int
 
     # Dataset params
-    lookup_table_path: str # Path to the cloud dataset lookup table
+    train_lookup_table_path: str # Path to the cloud dataset lookup table
+    val_lookup_table_path: str # Path to the cloud dataset lookup table
     credentials_path: str # Path to the cloud credentials
     bucket_name: str # Name of the google cloud bucket for the big dataset
     cache_dir: str # Directory for storing the cache
     nbars: int
     dataset_dir: str # The dir for the local batch
+    load_first_n_data: int # Number of data to load first, set to -1 to load all data
 
     vae_ckpt_path: str # Path to the VAE checkpoint dir
     im_channels: int # Number of channels in our image (for VQVAE, it is your responsibility to make sure VQVAE dims == DDPM dims)
@@ -161,8 +165,19 @@ def load_unet_model(args: TrainingConfig, device):
 
 def load_train_dataset(args: TrainingConfig):
     im_dataset = SpectrogramDatasetFromCloud(
-        lookup_table_path=args.lookup_table_path,
+        lookup_table_path=args.train_lookup_table_path,
         default_specs=SpectrogramDataset(dataset_dir=args.dataset_dir, num_workers=0, load_first_n=10),
+        credentials_path=args.credentials_path,
+        bucket_name=args.bucket_name,
+        cache_dir=args.cache_dir,
+        nbars=args.nbars,
+    )
+    return im_dataset
+
+def load_val_dataset(args: TrainingConfig):
+    im_dataset = SpectrogramDatasetFromCloud(
+        lookup_table_path=args.val_lookup_table_path,
+        default_specs=SpectrogramDataset(dataset_dir=args.dataset_dir, num_workers=0, load_first_n=3),
         credentials_path=args.credentials_path,
         bucket_name=args.bucket_name,
         cache_dir=args.cache_dir,
@@ -190,7 +205,48 @@ def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DD
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
         latents = latents / VAE_SCALING_FACTOR
         images = vae.decode(latents)
-        raise NotImplementedError
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=128,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format="png",
+    )
+
+    # images is shape (1, 4, 512, 512)
+    images = images[0]
+
+    # Abuse the decode function by pretending we are an audio with 4 channels
+    for im, part in zip(images, "VDIB"):
+        audio = specs.spectrogram_to_audio(images, nframes = TARGET_NFRAMES)
+        audio.save(f"{sample_prefix}{part}.wav")
+
+def save_model(accelerator: Accelerator,
+               args: TrainingConfig,
+               unet: UNet2DConditionModel,
+               prompt_embeds: PromptEmbed,
+               ema_model: EMAModel,
+               filename: str):
+    unet = accelerator.unwrap_model(unet)
+    prompt_embeds = accelerator.unwrap_model(prompt_embeds)
+
+    if args.use_ema:
+        ema_model.store(unet.parameters())
+        ema_model.copy_to(unet.parameters())
+
+    path = os.path.join(args.output_dir, filename)
+    torch.save({
+        "unet": unet.state_dict(),
+        "prompt_embeds": prompt_embeds.state_dict(),
+    }, path)
+    logger.info(f"Saved UNet model to {path}")
+
+    if args.use_ema:
+        ema_model.restore(unet.parameters())
 
 def main(args: TrainingConfig):
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
@@ -295,8 +351,8 @@ def main(args: TrainingConfig):
     )
 
     # Prepare everything with our `accelerator`.
-    model, optimizer, train_dataloader, lr_scheduler = accelerator.prepare(
-        model, optimizer, train_dataloader, lr_scheduler
+    model, optimizer, train_dataloader, lr_scheduler, prompt_embeds = accelerator.prepare(
+        model, optimizer, train_dataloader, lr_scheduler, prompt_embeds
     )
 
     vae = vae.to(accelerator.device, dtype=weight_dtype)
@@ -348,14 +404,12 @@ def main(args: TrainingConfig):
 
             first_epoch = global_step // num_update_steps_per_epoch
 
-    step_count = 0 #TODO implement save every n steps
-
     # Train!
     for epoch in range(first_epoch, args.num_epochs):
         model.train()
         progress_bar = tqdm(total=num_update_steps_per_epoch, disable=not accelerator.is_local_main_process)
         progress_bar.set_description(f"Epoch {epoch}")
-        for step, batch in enumerate(train_dataloader):
+        for batch in train_dataloader:
             clean_images = batch["input"].to(weight_dtype)
             latents, _ = vae.encode(clean_images)
             latents = latents * VAE_SCALING_FACTOR
@@ -427,25 +481,9 @@ def main(args: TrainingConfig):
 
         accelerator.wait_for_everyone()
 
-        # Save the model and post-process stuff
+        # Save the model after the epoch
         if accelerator.is_main_process:
-            # Do logging if necessary
-            if epoch % args.save_model_epochs == 0 or epoch == args.num_epochs - 1:
-                # save the model
-                unet = accelerator.unwrap_model(model)
-
-                if args.use_ema:
-                    ema_model.store(unet.parameters())
-                    ema_model.copy_to(unet.parameters())
-
-                # Save the unet
-                unet_path = os.path.join(args.output_dir, f"unet-{epoch}.pt")
-                torch.save(unet.state_dict(), unet_path)
-                logger.info(f"Saved UNet model to {unet_path}")
-
-                if args.use_ema:
-                    ema_model.restore(unet.parameters())
-
+            save_model(accelerator, args, model, prompt_embeds, ema_model, f"model-{epoch}.pt")
     accelerator.end_training()
 
 if __name__ == "__main__":

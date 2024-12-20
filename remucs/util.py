@@ -243,12 +243,12 @@ class SpectrogramCollection:
         """
         data = torch.pow(data, 1/self.power)
         data = data * self.max_value
-        data = data.transpose(1, 2).numpy()
+        data_np = data.transpose(1, 2).numpy()
         # For some reason torchaudio griffin lim does not perform a good reconstruction
-        data = librosa.griffinlim(data,
+        data_np = librosa.griffinlim(data_np,
                                   hop_length=self.hop_length,
                                   win_length=self.win_length,
                                   n_fft=self.n_fft,
                                   length=nframes
                                 ) # Returns numpy array (2, T)
-        return Audio(torch.from_numpy(data), self.sample_rate)
+        return Audio(torch.from_numpy(data_np), self.sample_rate)

@@ -3,7 +3,7 @@ train_batch_size: 4
 eval_batch_size: 4
 dataloader_num_workers: 0
 num_epochs: 3
-save_model_epochs: 10
+save_model_steps: 512
 gradient_accumulation_steps: 1
 learning_rate: 0.0001
 lr_scheduler: "cosine"
