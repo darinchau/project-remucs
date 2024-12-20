@@ -38,9 +38,9 @@ from diffusers.utils.torch_utils import randn_tensor
 from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
 from remucs.model.vae import VQVAE, VQVAEConfig
 
-from .calculate import SpectrogramCollection, TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
-
 import wandb
+
+from .test_vqvae import save_vae_output_to_audio
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -205,25 +205,7 @@ def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DD
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
         latents = latents / VAE_SCALING_FACTOR
         images = vae.decode(latents)
-    specs = SpectrogramCollection(
-        target_width=TARGET_FEATURES,
-        target_height=128,
-        sample_rate=TARGET_SR,
-        hop_length=512,
-        n_fft=NFFT,
-        win_length=NFFT,
-        max_value=SPEC_MAX_VALUE,
-        power=SPEC_POWER,
-        format="png",
-    )
-
-    # images is shape (1, 4, 512, 512)
-    images = images[0]
-
-    # Abuse the decode function by pretending we are an audio with 4 channels
-    for im, part in zip(images, "VDIB"):
-        audio = specs.spectrogram_to_audio(images, nframes = TARGET_NFRAMES)
-        audio.save(f"{sample_prefix}{part}.wav")
+    save_vae_output_to_audio(sample_prefix, images)
 
 def save_model(accelerator: Accelerator,
                args: TrainingConfig,

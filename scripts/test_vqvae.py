@@ -20,6 +20,8 @@ from remucs.model.vae import VQVAE, VQVAEConfig
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
 
+from .calculate import SpectrogramCollection, TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def read_config(config_path: str):
@@ -38,7 +40,28 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def main(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str):
+def save_vae_output_to_audio(sample_prefix: str, images: Tensor):
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=128,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format="png",
+    )
+
+    # images is shape (1, 4, 512, 512)
+    images = images[0]
+
+    # Abuse the decode function by pretending we are an audio with 4 channels
+    for im, part in zip(images, "VDIB"):
+        audio = specs.spectrogram_to_audio(images, nframes = TARGET_NFRAMES)
+        audio.save(f"{sample_prefix}{part}.wav")
+
+def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3):
     """Tests the VQVAE model on the test dataset"""
     config = read_config(config_path)
 
@@ -53,7 +76,11 @@ def main(config_path: str, dataset_dir: str, lookup_table_path: str, model_path:
 
     im_dataset = load_dataset(
         lookup_table_path=lookup_table_path,
-        local_dataset_dir=dataset_dir
+        local_dataset_dir=dataset_dir,
+        credentials_path=dataset_config['credentials_path'],
+        bucket_name=dataset_config['bucket_name'],
+        cache_dir=dataset_config['cache_dir'],
+        backup_dataset_first_n=1
     )
 
     print('Dataset size: {}'.format(len(im_dataset)))
@@ -79,10 +106,13 @@ def main(config_path: str, dataset_dir: str, lookup_table_path: str, model_path:
     perceptual_losses = []
     codebook_losses = []
     losses = {}
+
+    reconstruction_idxs = random.sample(range(len(im_dataset)), k=reconstructions)
+
     with torch.no_grad():
         for i, im in tqdm(enumerate(data_loader), total=len(data_loader)):
             im = im.float().to(device)
-            im = im[:, :, 0]
+            im = im.mean(dim=2)
 
             model_output = model(im)
             output, z, quantize_losses = model_output
@@ -103,14 +133,12 @@ def main(config_path: str, dataset_dir: str, lookup_table_path: str, model_path:
                 'codebook_loss': quantize_losses['codebook_loss'].item(),
             }
 
+            if i in reconstruction_idxs:
+                output = output.detach().cpu()
+                im = im.detach().cpu()
+
+                save_vae_output_to_audio(f"recn{i}_", output)
+                save_vae_output_to_audio(f"orig{i}_", im)
+
     print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f}'
             .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses)))
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--dataset_dir', dest='dataset_dir', type=str, default="D:/Repository/project-remucs/audio-infos-v3/spectrograms")
-    parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
-    parser.add_argument('--lookup_table', dest='lookup_table_path', default='resources/lookup_table_test.json', type=str)
-    parser.add_argument('--model', dest='model_path', default='resources/models/vqvae/vqvae_epoch_1_272384_vqvae_autoencoder_ckpt.pth', type=str)
-    args = parser.parse_args()
-    main(args.config_path, args.dataset_dir, args.lookup_table_path, args.model_path)
