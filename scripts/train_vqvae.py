@@ -17,7 +17,7 @@ from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VQVAEConfig
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
 
@@ -208,7 +208,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
             im = im.float().to(device)
 
             # im is (4, 4, 2, 512, 512) -> take only the magnitude
-            im = im [:, :, 0]
+            im = im.sum(dim=2)
 
             # Fetch autoencoders output(reconstructions)
             with autocast('cuda'):

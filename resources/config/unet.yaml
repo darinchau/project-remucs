@@ -32,3 +32,6 @@ credentials_path: "./resources/key/key.json"
 bucket_name: "project-remucs-spectrograms-1"
 cache_dir: "./resources/spec_cache"
 dataset_dir: "./resources/test_specs"
+
+model_id: "CompVis/stable-diffusion-v1-4"
+initial_prompt: "spectrograms"

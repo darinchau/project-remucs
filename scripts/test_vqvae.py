@@ -16,7 +16,7 @@ from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VQVAEConfig
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
 

@@ -23,16 +23,20 @@ from torchvision import transforms
 from tqdm.auto import tqdm
 from torch.utils.data import DataLoader
 from torch.optim.adamw import AdamW
+import torch
+from torch import nn
 
 import diffusers
-from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel #type: ignore
+from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel, StableDiffusionPipeline #type: ignore
+from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
 from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
+from diffusers.utils.torch_utils import randn_tensor
 
 from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
-from remucs.model import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VQVAEConfig
 
 import wandb
 
@@ -46,6 +50,24 @@ logger = get_logger(__name__, log_level="INFO")
 # seems to use this value as well
 # Don't ask me how this value was derived, I have no idea D:
 VAE_SCALING_FACTOR = 0.18215
+
+class PromptEmbed(nn.Module):
+    def __init__(self, tensor, regularizer: float = 3):
+        """A simple class to update the embeddings during training time
+        The regularizer controls the margins of the norm of the updated embeddings, the higher the regularizer, the more lenient the controls"""
+        super(PromptEmbed, self).__init__()
+        self.tensor = nn.Parameter(tensor)
+        self.initial_l2 = self.get_norm()
+        self.regularizer = regularizer
+
+    def get_norm(self):
+        l2_norms = torch.norm(self.tensor, p=2, dim=2)
+        average_l2_norm = l2_norms.mean()
+        return average_l2_norm
+
+    def forward(self):
+        regularizer_loss = ((self.get_norm() - self.initial_l2) / self.regularizer).square()
+        return self.tensor.data, regularizer_loss
 
 # Add typing to the arguments
 class TrainingConfig:
@@ -89,6 +111,10 @@ class TrainingConfig:
     im_channels: int # Number of channels in our image (for VQVAE, it is your responsibility to make sure VQVAE dims == DDPM dims)
     vae_config: dict
 
+    model_id: str
+    initial_prompt: str # By freezing the prompt, we specify the initial prompt for the model
+    freeze_initial_prompt: bool
+
 def parse_args(path = "./resources/config/unet.yaml"):
     with open(path, "r") as f:
         config = yaml.safe_load(f)
@@ -97,12 +123,41 @@ def parse_args(path = "./resources/config/unet.yaml"):
 def load_vae(args: TrainingConfig, device):
     vae_config = VQVAEConfig(**args.vae_config)
     model = VQVAE(im_channels=args.im_channels, model_config=vae_config).to(device)
+    sd = torch.load(args.vae_ckpt_path, map_location=device)
+    model.load_state_dict(sd)
     return model
 
-def load_unet_model():
+def load_unet_model(args: TrainingConfig, device):
     # Loads the UNet model and scheduler.
     # Implement later...
-    raise NotImplementedError
+    model_id = args.model_id
+
+    pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16) # type: ignore
+    pipe = pipe.to(device)
+
+    prompt = args.initial_prompt
+
+    prompt_embeds, negative_prompt_embeds = pipe.encode_prompt(
+        prompt,
+        device,
+        num_images_per_prompt=1,
+        do_classifier_free_guidance=False,
+        negative_prompt=None,
+        prompt_embeds=None,
+        negative_prompt_embeds=None,
+        lora_scale=None,
+        clip_skip=None,
+    )
+
+    pe = PromptEmbed(prompt_embeds)
+    unet: UNet2DConditionModel = pipe.unet
+    scheduler: DDPMScheduler = pipe.scheduler
+
+    if args.freeze_initial_prompt:
+        pe.requires_grad_(False)
+
+    assert unet.config["sample_size"] == args.vae_config["sample_size"], f"UNet ({unet.config['sample_size']}) and VQVAE ({args.vae_config['sample_size']}) sample sizes must match"
+    return unet, scheduler, pe
 
 def load_train_dataset(args: TrainingConfig):
     im_dataset = SpectrogramDatasetFromCloud(
@@ -114,6 +169,28 @@ def load_train_dataset(args: TrainingConfig):
         nbars=args.nbars,
     )
     return im_dataset
+
+def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DDPMScheduler, vae: VQVAE, device, sample_prefix: str = "sample_"):
+    scheduler.set_timesteps(50, device)
+    timesteps = scheduler.timesteps
+    embeds, _ = prompt_embeds()
+    with torch.no_grad():
+        latents = randn_tensor((1, 4, 64, 64), dtype = embeds.dtype, device = device)
+        for i, t in enumerate(timesteps):
+            latent_model_input = scheduler.scale_model_input(latents, t)
+            noise_pred = unet(
+                latent_model_input,
+                t,
+                encoder_hidden_states=embeds,
+                timestep_cond=None,
+                cross_attention_kwargs=None,
+                added_cond_kwargs=None,
+                return_dict=False,
+            )[0]
+            latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
+        latents = latents / VAE_SCALING_FACTOR
+        images = vae.decode(latents)
+        raise NotImplementedError
 
 def main(args: TrainingConfig):
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
@@ -155,7 +232,7 @@ def main(args: TrainingConfig):
     vae.requires_grad_(False)
 
     # Initialize the model
-    model, noise_scheduler = load_unet_model()
+    model, noise_scheduler, prompt_embeds = load_unet_model(args, accelerator.device)
 
     # Create EMA for the model.
     if args.use_ema:
@@ -271,6 +348,8 @@ def main(args: TrainingConfig):
 
             first_epoch = global_step // num_update_steps_per_epoch
 
+    step_count = 0 #TODO implement save every n steps
+
     # Train!
     for epoch in range(first_epoch, args.num_epochs):
         model.train()
@@ -279,18 +358,18 @@ def main(args: TrainingConfig):
         for step, batch in enumerate(train_dataloader):
             clean_images = batch["input"].to(weight_dtype)
             latents, _ = vae.encode(clean_images)
-            latents = latents * VAE_SCALING_FACTOR # vae.config.scaling_factor
+            latents = latents * VAE_SCALING_FACTOR
 
             # Sample noise that we'll add to the images
             noise = torch.randn(latents.shape, dtype=weight_dtype, device=latents.device)
             # Sample a random timestep for each image
             timesteps = torch.randint(
-                0, noise_scheduler.config.num_train_timesteps, (latents.shape[0],), device=clean_images.device
+                0, noise_scheduler.config["num_train_timesteps"], (latents.shape[0],), device=clean_images.device
             ).long()
 
             # Add noise to the clean images according to the noise magnitude at each timestep
             # (this is the forward diffusion process)
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps) #type: ignore
 
             with accelerator.accumulate(model):
                 # Predict the noise residual
