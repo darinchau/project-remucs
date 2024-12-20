@@ -133,12 +133,15 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                 'codebook_loss': quantize_losses['codebook_loss'].item(),
             }
 
-            if i in reconstruction_idxs:
-                output = output.detach().cpu()
-                im = im.detach().cpu()
+            for j in range(batch_size):
+                if i * batch_size + j in reconstruction_idxs:
+                    output = output[j].detach().cpu()
+                    im = im[j].detach().cpu()
 
-                save_vae_output_to_audio(f"recn{i}_", output)
-                save_vae_output_to_audio(f"orig{i}_", im)
+                    save_vae_output_to_audio(f"recn{i}_", output)
+                    save_vae_output_to_audio(f"orig{i}_", im)
 
     print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f}'
             .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses)))
+
+    print(losses)
