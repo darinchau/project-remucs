@@ -44,19 +44,6 @@ SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
 AUDIO_SAVE_PATH = os.path.join(DATASET_PATH, "audio")
 LIST_SPLIT_SIZE = 300
 
-# Create the directories if they don't exist
-if not os.path.exists(DATASET_PATH):
-    os.makedirs(DATASET_PATH)
-
-if not os.path.exists(DATAFILE_PATH):
-    os.makedirs(DATAFILE_PATH)
-
-if not os.path.exists(SPECTROGRAM_SAVE_PATH):
-    os.makedirs(SPECTROGRAM_SAVE_PATH)
-
-if not os.path.exists(AUDIO_SAVE_PATH):
-    os.makedirs(AUDIO_SAVE_PATH)
-
 # Config for the spectrogram part of the data collection
 # The math works out such that if we make the hop length 512, BPM 120
 # and sample rate 32768
@@ -79,6 +66,20 @@ CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 MAX_SONG_LENGTH = 480
 MIN_SONG_LENGTH = 120
 MIN_VIEWS = 5e5
+
+def init():
+    # Create the directories if they don't exist
+    if not os.path.exists(DATASET_PATH):
+        os.makedirs(DATASET_PATH)
+
+    if not os.path.exists(DATAFILE_PATH):
+        os.makedirs(DATAFILE_PATH)
+
+    if not os.path.exists(SPECTROGRAM_SAVE_PATH):
+        os.makedirs(SPECTROGRAM_SAVE_PATH)
+
+    if not os.path.exists(AUDIO_SAVE_PATH):
+        os.makedirs(AUDIO_SAVE_PATH)
 
 
 def filter_song(yt: YouTubeURL) -> bool:
@@ -527,6 +528,8 @@ def get_next_deferred_url():
                 processed_urls.add(url)
 
 def main():
+    init()
+
     # Sanity check
     if not os.path.exists(PLAYLIST_QUEUE_PATH):
         print("No playlist queue found.")

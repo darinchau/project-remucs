@@ -61,7 +61,7 @@ def save_vae_output_to_audio(sample_prefix: str, images: Tensor):
         audio = specs.spectrogram_to_audio(images, nframes = TARGET_NFRAMES)
         audio.save(f"{sample_prefix}{part}.wav")
 
-def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3):
+def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32):
     """Tests the VQVAE model on the test dataset"""
     config = read_config(config_path)
 
@@ -86,7 +86,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
     print('Dataset size: {}'.format(len(im_dataset)))
 
     data_loader = DataLoader(im_dataset,
-                             batch_size=train_config['autoencoder_batch_size'],
+                             batch_size=batch_size,
                              num_workers=train_config['num_workers_dl'],
                              shuffle=False)
 
