@@ -239,6 +239,8 @@ def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
     if credentials_path is not None and bucket_name is not None:
         if cache_dir is None:
             cache_dir = tempfile.mkdtemp()
+        if backup_dataset_first_n is None:
+            backup_dataset_first_n = -1
         return SpectrogramDatasetFromCloud(
             lookup_table_path=lookup_table_path,
             default_specs=SpectrogramDataset(dataset_dir = local_dataset_dir, num_workers=0, load_first_n=backup_dataset_first_n),
