@@ -479,5 +479,5 @@ def main(args: TrainingConfig):
 
 if __name__ == "__main__":
     config_path = "./resources/config/unet.yaml"
-
-    main(parse_args())
+    vae_ckpt_path = "./resources/ckpts/vqvae.pt"
+    main(parse_args(config_path, vae_ckpt_path))
