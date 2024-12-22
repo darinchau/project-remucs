@@ -10,13 +10,11 @@ from dataclasses import dataclass
 import yaml
 
 import accelerate
-import datasets
 import torch
 import torch.nn.functional as F
 from accelerate import Accelerator, InitProcessGroupKwargs
 from accelerate.logging import get_logger
 from accelerate.utils import ProjectConfiguration, set_seed
-from datasets import load_dataset
 from huggingface_hub import create_repo, upload_folder
 from packaging import version
 from torchvision import transforms
@@ -239,7 +237,9 @@ def save_model(accelerator: Accelerator,
     if args.use_ema:
         ema_model.restore(unet.parameters())
 
-def main(args: TrainingConfig):
+def main(config_path: str, vae_ckpt_path: str):
+    args = parse_args(config_path, vae_ckpt_path)
+
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
 
@@ -263,10 +263,8 @@ def main(args: TrainingConfig):
     )
     logger.info(accelerator.state, main_process_only=False)
     if accelerator.is_local_main_process:
-        datasets.utils.logging.set_verbosity_warning()
         diffusers.utils.logging.set_verbosity_info()
     else:
-        datasets.utils.logging.set_verbosity_error()
         diffusers.utils.logging.set_verbosity_error()
 
     # Handle the repository creation
@@ -275,7 +273,7 @@ def main(args: TrainingConfig):
             os.makedirs(args.output_dir, exist_ok=True)
 
     # Load pretrained VAE model
-    vae = load_vae(args, accelerator.device)
+    vae = load_vae(config_path, args, accelerator.device)
     vae.requires_grad_(False)
 
     # Initialize the model
@@ -296,10 +294,10 @@ def main(args: TrainingConfig):
     weight_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         weight_dtype = torch.float16
-        args.mixed_precision = accelerator.mixed_precision
+        object.__setattr__(args, "mixed_precision", "fp16")
     elif accelerator.mixed_precision == "bf16":
         weight_dtype = torch.bfloat16
-        args.mixed_precision = accelerator.mixed_precision
+        object.__setattr__(args, "mixed_precision", "bf16")
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
@@ -387,7 +385,7 @@ def main(args: TrainingConfig):
             accelerator.print(
                 f"Checkpoint '{args.resume_from_checkpoint}' does not exist. Starting a new training run."
             )
-            args.resume_from_checkpoint = None
+            object.__setattr__(args, "resume_from_checkpoint", None)
         else:
             accelerator.print(f"Resuming from checkpoint {path}")
             accelerator.load_state(os.path.join(args.output_dir, path))
@@ -480,4 +478,4 @@ def main(args: TrainingConfig):
 if __name__ == "__main__":
     config_path = "./resources/config/unet.yaml"
     vae_ckpt_path = "./resources/ckpts/vqvae.pt"
-    main(parse_args(config_path, vae_ckpt_path))
+    main(config_path, vae_ckpt_path)
