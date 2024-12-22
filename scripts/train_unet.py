@@ -72,6 +72,7 @@ class PromptEmbed(nn.Module):
         return self.tensor.data, regularizer_loss
 
 # Add typing to the arguments
+@dataclass(frozen=True)
 class TrainingConfig:
     output_dir: str
     train_batch_size: int
@@ -111,29 +112,38 @@ class TrainingConfig:
     dataset_dir: str # The dir for the local batch
     load_first_n_data: int # Number of data to load first, set to -1 to load all data
 
-    vae_ckpt_path: str # Path to the VAE checkpoint dir
-    im_channels: int # Number of channels in our image (for VQVAE, it is your responsibility to make sure VQVAE dims == DDPM dims)
-    vae_config: dict
+    # VQVAE params
+    vae_ckpt_path: str
 
+    # Loading the VQVAE model
     model_id: str
     initial_prompt: str # By freezing the prompt, we specify the initial prompt for the model
     freeze_initial_prompt: bool
 
-def parse_args(path = "./resources/config/unet.yaml"):
+def parse_args(path: str, vae_ckpt_path: str, train_lookup_table_path: str = "./resources/lookup_table_train.json",
+               val_lookup_table_path: str = "./resources/lookup_table_val.json", **kwargs) -> TrainingConfig:
     with open(path, "r") as f:
         config = yaml.safe_load(f)
+    config['vae_ckpt_path'] = vae_ckpt_path
+    config['train_lookup_table_path'] = train_lookup_table_path
+    config['val_lookup_table_path'] = val_lookup_table_path
+    config.update(kwargs)
     return TrainingConfig(**config)
 
-def load_vae(args: TrainingConfig, device):
-    vae_config = VQVAEConfig(**args.vae_config)
-    model = VQVAE(im_channels=args.im_channels, model_config=vae_config).to(device)
+def load_vae(args_path: str, args: TrainingConfig, device):
+    # Load the VQVAE model
+    from .train_vqvae import read_config
+
+    vae_config_path = os.path.join(os.path.dirname(args_path), "vqvae.yaml")
+    config = read_config(vae_config_path)
+    vae_config = VQVAEConfig(**config['autoencoder_params'])
+    model = VQVAE(im_channels=config['dataset_params']['im_channels'], model_config=vae_config).to(device)
     sd = torch.load(args.vae_ckpt_path, map_location=device)
     model.load_state_dict(sd)
     return model
 
 def load_unet_model(args: TrainingConfig, device):
     # Loads the UNet model and scheduler.
-    # Implement later...
     model_id = args.model_id
 
     pipe: StableDiffusionPipeline = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16) # type: ignore
@@ -160,7 +170,6 @@ def load_unet_model(args: TrainingConfig, device):
     if args.freeze_initial_prompt:
         pe.requires_grad_(False)
 
-    assert unet.config["sample_size"] == args.vae_config["sample_size"], f"UNet ({unet.config['sample_size']}) and VQVAE ({args.vae_config['sample_size']}) sample sizes must match"
     return unet, scheduler, pe
 
 def load_train_dataset(args: TrainingConfig):
@@ -469,4 +478,6 @@ def main(args: TrainingConfig):
     accelerator.end_training()
 
 if __name__ == "__main__":
+    config_path = "./resources/config/unet.yaml"
+
     main(parse_args())

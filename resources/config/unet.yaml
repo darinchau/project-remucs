@@ -27,11 +27,12 @@ enable_xformers_memory_efficient_attention: true
 acc_seed: 1943
 
 nbars: 4
-lookup_table_path: "./resources/lookup_table.json"
 credentials_path: "./resources/key/key.json"
 bucket_name: "project-remucs-spectrograms-1"
 cache_dir: "./resources/spec_cache"
 dataset_dir: "./resources/test_specs"
+load_first_n_data: 30
 
 model_id: "CompVis/stable-diffusion-v1-4"
 initial_prompt: "spectrograms"
+freeze_initial_prompt: true
