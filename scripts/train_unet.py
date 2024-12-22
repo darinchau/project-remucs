@@ -237,8 +237,11 @@ def save_model(accelerator: Accelerator,
     if args.use_ema:
         ema_model.restore(unet.parameters())
 
-def main(config_path: str, vae_ckpt_path: str):
-    args = parse_args(config_path, vae_ckpt_path)
+def main(config_path: str, vae_ckpt_path: str,
+         lookup_table_path: str = "./resources/lookup_table_train.json",
+            val_lookup_table_path: str = "./resources/lookup_table_val.json", **kwargs):
+
+    args = parse_args(config_path, vae_ckpt_path, lookup_table_path, val_lookup_table_path, **kwargs)
 
     logging_dir = os.path.join(args.output_dir, args.logging_dir)
     accelerator_project_config = ProjectConfiguration(project_dir=args.output_dir, logging_dir=logging_dir)
