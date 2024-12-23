@@ -71,7 +71,7 @@ class PromptEmbed(nn.Module):
         The regularizer controls the margins of the norm of the updated embeddings, the higher the regularizer, the more lenient the controls"""
         super(PromptEmbed, self).__init__()
         self.tensor = nn.Parameter(tensor)
-        self.initial_l2 = self.get_norm()
+        self.initial_l2 = self.get_norm().detach()
         self.regularizer = regularizer
 
     def get_norm(self):
@@ -129,6 +129,9 @@ class TrainingConfig:
     model_id: str
     initial_prompt: str # By freezing the prompt, we specify the initial prompt for the model
     freeze_initial_prompt: bool
+
+    # Project params
+    project_name: str
 
 def parse_args(path: str, vae_ckpt_path: str, train_lookup_table_path: str = "./resources/lookup_table_train.json",
                val_lookup_table_path: str = "./resources/lookup_table_val.json", **kwargs) -> TrainingConfig:
@@ -387,7 +390,7 @@ def main(config_path: str,
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="vqvae_training-3",
+        project=args.project_name,
         config=vars(args),
     )
 
@@ -419,6 +422,7 @@ def main(config_path: str,
             # Forward pass
             with accelerator.autocast():
                 encoder_hidden_states, regularizer_loss = prompt_embeds()
+                encoder_hidden_states = encoder_hidden_states.expand(noisy_latents.shape[0], -1, -1)
                 model_output = model(noisy_latents, timesteps, encoder_hidden_states).sample
                 mse = F.mse_loss(model_output.float(), noise.float())
 
@@ -433,10 +437,8 @@ def main(config_path: str,
                         num_to_remove = len(checkpoints) - args.checkpoints_total_limit + 1
                         removing_checkpoints = checkpoints[0:num_to_remove]
 
-                        logger.info(
-                            f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints"
-                        )
-                        logger.info(f"removing checkpoints: {', '.join(removing_checkpoints)}")
+                        print(f"{len(checkpoints)} checkpoints already exist, removing {len(removing_checkpoints)} checkpoints")
+                        print(f"removing checkpoints: {', '.join(removing_checkpoints)}")
 
                         for removing_checkpoint in removing_checkpoints:
                             removing_checkpoint = os.path.join(args.output_dir, removing_checkpoint)

@@ -17,9 +17,6 @@ ema_inv_gamma: 1.0
 ema_power: 0.75
 ema_max_decay: 0.9999
 pe_norm_loss_weight: 0.2
-logger: "wandb"
-logging_dir: "logs"
-local_rank: -1
 mixed_precision: "bf16"
 checkpointing_steps: 512
 checkpoints_total_limit: 10
@@ -37,3 +34,4 @@ load_first_n_data: 30
 model_id: "CompVis/stable-diffusion-v1-4"
 initial_prompt: "spectrograms"
 freeze_initial_prompt: true
+project_name: "train-unet"
