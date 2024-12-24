@@ -460,7 +460,7 @@ class VQVAE(nn.Module):
         return out, z, quant_losses
 
 def vae_output_to_audio(images: Tensor):
-    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format"
+    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format, got {}".format(images.shape)
     specs = SpectrogramCollection(
         target_width=TARGET_FEATURES,
         target_height=TARGET_FEATURES,

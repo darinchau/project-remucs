@@ -66,6 +66,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
     set_seed(train_config['seed'])
 
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
+    model.eval()
 
     im_dataset = load_dataset(
         lookup_table_path=lookup_table_path,
@@ -140,11 +141,11 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
 
             for j in range(batch_size):
                 if i * batch_size + j in reconstruction_idxs:
-                    output = output[j].detach().cpu()
-                    im = im[j].detach().cpu()
+                    output_ = output[j].detach().cpu()
+                    im_ = im[j].detach().cpu()
 
-                    resonstructed_audio = vae_output_to_audio(output)
-                    original_audio = vae_output_to_audio(im)
+                    resonstructed_audio = vae_output_to_audio(output_)
+                    original_audio = vae_output_to_audio(im_)
 
                     resonstructed_audio.save(f"reconstructed_{i * batch_size + j}.wav")
                     original_audio.save(f"original_{i * batch_size + j}.wav")
