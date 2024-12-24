@@ -105,7 +105,6 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
 
     print("Reconstructing: ", reconstruction_idxs)
 
-
     with torch.no_grad():
         for i, im in tqdm(enumerate(data_loader), total=len(data_loader)):
             im = im.float().to(device)
@@ -122,7 +121,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
 
             codebook_losses.append(quantize_losses['codebook_loss'].item())
 
-            griffin_lim_loss = gla_loss(output, im).mean().item()
+            griffin_lim_loss = gla_loss(output, im).mean()
 
             losses[i] = {
                 'path': im_dataset.path_bar[i][0],
@@ -130,7 +129,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                 'recon_loss': recon_loss.item(),
                 'perceptual_loss': lpips_loss.item(),
                 'codebook_loss': quantize_losses['codebook_loss'].item(),
-                'griffin_lim_loss': griffin_lim_loss
+                'griffin_lim_loss': griffin_lim_loss.item()
             }
 
             for j in range(batch_size):
@@ -144,7 +143,13 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                     resonstructed_audio.save(f"reconstructed_{i * batch_size + j}.wav")
                     original_audio.save(f"original_{i * batch_size + j}.wav")
 
-    print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f}'
-            .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses)))
+            print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f} | Griffin-Lim Loss : {:.4f}'
+                .format(recon_loss.item(), lpips_loss.item(), quantize_losses['codebook_loss'].item(), griffin_lim_loss.item()))
+
+            if i == first_n - 1:
+                break
+
+    print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f} | Griffin-Lim Loss : {:.4f}'
+        .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses), np.mean(griffin_lim_loss)))
 
     print(losses)
