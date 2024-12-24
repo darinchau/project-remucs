@@ -42,7 +42,9 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32, first_n: int = 3):
+def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
+             model_path: str, reconstructions: int = 3, batch_size: int = 32, first_n: int = 3,
+             compute_griffin_lim: bool = False):
     """Tests the VQVAE model on the test dataset
 
     Args:
@@ -52,7 +54,8 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
         model_path (str): Path to the model checkpoint
         reconstructions (int, optional): Number of reconstructions to save. Defaults to 3.
         batch_size (int, optional): Batch size for the data loader. Defaults to 32.
-        first_n (int, optional): Number of batches to evaluate. Set to -1 to evaluate all. Defaults to 3."""
+        first_n (int, optional): Number of batches to evaluate. Set to -1 to evaluate all. Defaults to 3.
+        compute_griffin_lim (bool, optional): Whether to compute the Griffin-Lim loss. Defaults to False."""
     config = read_config(config_path)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
@@ -95,6 +98,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
     recon_losses = []
     perceptual_losses = []
     codebook_losses = []
+    griffin_lim_losses = []
     losses = {}
 
     if first_n < 0:
@@ -121,16 +125,18 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
 
             codebook_losses.append(quantize_losses['codebook_loss'].item())
 
-            griffin_lim_loss = gla_loss(output, im).mean()
-
             losses[i] = {
                 'path': im_dataset.path_bar[i][0],
                 'bar': im_dataset.path_bar[i][1],
-                'recon_loss': recon_loss.item(),
-                'perceptual_loss': lpips_loss.item(),
-                'codebook_loss': quantize_losses['codebook_loss'].item(),
-                'griffin_lim_loss': griffin_lim_loss.item()
+                'Reconstruction Loss': recon_loss.item(),
+                'Perceptual Loss': lpips_loss.item(),
+                'Codebook Loss': quantize_losses['codebook_loss'].item(),
             }
+
+            if compute_griffin_lim:
+                griffin_lim_loss = gla_loss(output, im).mean()
+                losses[i]['Griffin-Lim Loss'] = griffin_lim_loss.item()
+                griffin_lim_losses.append(griffin_lim_loss.item())
 
             for j in range(batch_size):
                 if i * batch_size + j in reconstruction_idxs:
@@ -143,13 +149,18 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                     resonstructed_audio.save(f"reconstructed_{i * batch_size + j}.wav")
                     original_audio.save(f"original_{i * batch_size + j}.wav")
 
-            print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f} | Griffin-Lim Loss : {:.4f}'
-                .format(recon_loss.item(), lpips_loss.item(), quantize_losses['codebook_loss'].item(), griffin_lim_loss.item()))
+            print({
+                x: losses[i][x] for x in losses[i] if "loss" in x.lower()
+            })
 
             if i == first_n - 1:
                 break
 
-    print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f} | Griffin-Lim Loss : {:.4f}'
-        .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses), np.mean(griffin_lim_loss)))
+    print("Reconstruction Loss: ", np.mean(recon_losses))
+    print("Perceptual Loss: ", np.mean(perceptual_losses))
+    print("Codebook Loss: ", np.mean(codebook_losses))
+
+    if compute_griffin_lim:
+        print("Griffin-Lim Loss: ", np.mean(griffin_lim_losses))
 
     print(losses)
