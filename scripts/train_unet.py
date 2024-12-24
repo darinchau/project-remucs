@@ -24,7 +24,7 @@ import torch
 from torch import nn
 
 import diffusers
-from diffusers import StableDiffusionPipeline
+from diffusers import StableDiffusionPipeline # type: ignore
 from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel #type: ignore
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.optimization import get_scheduler
@@ -35,26 +35,11 @@ from diffusers.utils.torch_utils import randn_tensor
 
 from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
 from remucs.model.vae import VQVAE, VQVAEConfig
+from remucs.model.unet import PromptEmbed
 
 import wandb
 
 from .test_vqvae import vae_output_to_audio
-
-def ass():
-    import torch
-    from diffusers import StableDiffusionPipeline
-
-    model_id = "CompVis/stable-diffusion-v1-4"
-    device = "cuda"
-
-
-    pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
-    pipe = pipe.to(device)
-
-    prompt = "a photo of an astronaut riding a horse on mars"
-    image = pipe(prompt).images[0]
-
-    image.save("astronaut_rides_horse.png")
 
 # Will error if the minimal version of diffusers is not installed. Remove at your own risks.
 check_min_version("0.27.0.dev0")
@@ -64,24 +49,6 @@ check_min_version("0.27.0.dev0")
 # seems to use this value as well
 # Don't ask me how this value was derived, I have no idea D:
 VAE_SCALING_FACTOR = 0.18215
-
-class PromptEmbed(nn.Module):
-    def __init__(self, tensor, regularizer: float = 3):
-        """A simple class to update the embeddings during training time
-        The regularizer controls the margins of the norm of the updated embeddings, the higher the regularizer, the more lenient the controls"""
-        super(PromptEmbed, self).__init__()
-        self.tensor = nn.Parameter(tensor)
-        self.initial_l2 = self.get_norm().detach()
-        self.regularizer = regularizer
-
-    def get_norm(self):
-        l2_norms = torch.norm(self.tensor, p=2, dim=2)
-        average_l2_norm = l2_norms.mean()
-        return average_l2_norm
-
-    def forward(self):
-        regularizer_loss = ((self.get_norm() - self.initial_l2) / self.regularizer).square()
-        return self.tensor.data, regularizer_loss
 
 # Add typing to the arguments
 @dataclass(frozen=True)
@@ -157,17 +124,10 @@ def load_vae(args_path: str, args: TrainingConfig, device):
 
 def load_unet_model(args: TrainingConfig, device):
     # Loads the UNet model and scheduler.
-    model_id = "CompVis/stable-diffusion-v1-4"
-    device = "cuda"
-
+    model_id = args.model_id
 
     pipe = StableDiffusionPipeline.from_pretrained(model_id, torch_dtype=torch.float16)
     pipe = pipe.to(device)
-
-    prompt = "a photo of an astronaut riding a horse on mars"
-    image = pipe(prompt).images[0]
-
-    image.save("astronaut_rides_horse.png")
 
     prompt = args.initial_prompt
 
@@ -305,7 +265,7 @@ def main(config_path: str,
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
-            import xformers
+            import xformers # type: ignore
 
             if version.parse(xformers.__version__) == version.parse("0.0.16"):
                 print("xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details.")
