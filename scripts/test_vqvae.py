@@ -16,9 +16,11 @@ from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model.vae import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VQVAEConfig, vae_output_to_audio, gla_loss
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
+from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
+import torch.nn.functional as F
 
 from .calculate import SpectrogramCollection, TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
 
@@ -39,27 +41,6 @@ def set_seed(seed: int):
     random.seed(seed)
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
-
-def save_vae_output_to_audio(sample_prefix: str, images: Tensor):
-    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format"
-    specs = SpectrogramCollection(
-        target_width=TARGET_FEATURES,
-        target_height=TARGET_FEATURES,
-        sample_rate=TARGET_SR,
-        hop_length=512,
-        n_fft=NFFT,
-        win_length=NFFT,
-        max_value=SPEC_MAX_VALUE,
-        power=SPEC_POWER,
-        format="png",
-    )
-
-    # images is shape (4, 512, 512)
-    # Abuse the decode function by pretending we are an audio with 4 channels
-    # TARGET_NFRAMES * 4 is the number of frames we want to generate since we have 4 bars
-    for im, part in zip(images, "VDIB"):
-        audio = specs.spectrogram_to_audio(im[None], nframes = TARGET_NFRAMES * 4)
-        audio.save(f"{sample_prefix}{part}.wav")
 
 def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32):
     """Tests the VQVAE model on the test dataset"""
@@ -127,12 +108,15 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
 
             codebook_losses.append(quantize_losses['codebook_loss'].item())
 
+            griffin_lim_loss = gla_loss(output, im).mean().item()
+
             losses[i] = {
                 'path': im_dataset.path_bar[i][0],
                 'bar': im_dataset.path_bar[i][1],
                 'recon_loss': recon_loss.item(),
                 'perceptual_loss': lpips_loss.item(),
                 'codebook_loss': quantize_losses['codebook_loss'].item(),
+                'griffin_lim_loss': griffin_lim_loss
             }
 
             for j in range(batch_size):
@@ -140,8 +124,11 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
                     output = output[j].detach().cpu()
                     im = im[j].detach().cpu()
 
-                    save_vae_output_to_audio(f"recn{i * batch_size + j}_", output)
-                    save_vae_output_to_audio(f"orig{i * batch_size + j}_", im)
+                    resonstructed_audio = vae_output_to_audio(output)
+                    original_audio = vae_output_to_audio(im)
+
+                    resonstructed_audio.save(f"reconstructed_{i * batch_size + j}.wav")
+                    original_audio.save(f"original_{i * batch_size + j}.wav")
 
     print('Reconstruction Loss : {:.4f} | Perceptual Loss : {:.4f} | Codebook Loss : {:.4f}'
             .format(np.mean(recon_losses), np.mean(perceptual_losses), np.mean(codebook_losses)))

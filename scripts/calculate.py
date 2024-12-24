@@ -22,45 +22,36 @@ import random
 import datetime
 from PIL import Image
 from remucs.util import SpectrogramCollection
+from remucs.constants import (
+    DATASET_PATH,
+    DATAFILE_PATH,
+    ERROR_LOGS_PATH,
+    REJECTED_FILES_PATH,
+    DEFERRED_FILES_PATH,
+    REJECTED_SPECTROGRAMS_PATH,
+    SPECTROGRAM_SAVE_PATH,
+    AUDIO_SAVE_PATH,
+    PLAYLIST_QUEUE_PATH,
+    LIST_SPLIT_SIZE,
+    TARGET_FEATURES,
+    TARGET_SR,
+    NFFT,
+    SPEC_MAX_VALUE,
+    SPEC_POWER,
+    TARGET_NFRAMES,
+    BEAT_MODEL_PATH,
+    CHORD_MODEL_PATH,
+    TARGET_DURATION
+)
 from threading import Thread
 
 try:
     from pytubefix import Playlist, YouTube, Channel
 except ImportError:
     try:
-        from pytube import Playlist, YouTube, Channel
+        from pytube import Playlist, YouTube, Channel # type: ignore
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
-
-# Path stuff
-DATASET_PATH = "D:/Repository/project-remucs/audio-infos-v3"
-DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
-ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
-REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
-DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
-REJECTED_SPECTROGRAMS_PATH = os.path.join(DATASET_PATH, "rejected_spectrograms.txt")
-PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
-SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
-AUDIO_SAVE_PATH = os.path.join(DATASET_PATH, "audio")
-LIST_SPLIT_SIZE = 300
-
-# Config for the spectrogram part of the data collection
-# The math works out such that if we make the hop length 512, BPM 120
-# and sample rate 32768
-# Then the resulting image is exactly 128 frames
-# So if we combine 4 of these, we get 512 frames which makes me happy :)
-# Each bar is also exactly 2 seconds.
-# n_fft = 512 * 2 - 1, so output shape will be exactly 512 features
-TARGET_FEATURES = 512
-TARGET_BPM = 120
-TARGET_SR = 32768
-SPEC_POWER = 1./4
-SPEC_MAX_VALUE = 80
-TARGET_DURATION = 60 / TARGET_BPM * 4
-TARGET_NFRAMES = int(TARGET_SR * TARGET_DURATION)
-NFFT = TARGET_FEATURES * 2 - 1
-BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
-CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
 ## More dataset specifications
 MAX_SONG_LENGTH = 480
@@ -329,6 +320,11 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
                 write_reject_log(url, processed)
                 continue
 
+            audio_path = os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3")
+
+            audio.save(audio_path)
+            audio = Audio.load(audio_path)
+
             entry, parts = processed
 
             # Save the spectrogram features
@@ -341,9 +337,6 @@ def calculate_url_list(urls: list[YouTubeURL], genre: SongGenre, threads: dict[Y
 
             # Save the data entry
             encoder.write_to_path(entry, os.path.join(DATAFILE_PATH, f"{url.video_id}.dat3"))
-
-            # Save the audio
-            audio.save(os.path.join(AUDIO_SAVE_PATH, f"{url.video_id}.mp3"))
             print(f"Entry processed: {url}")
         except Exception as e:
             write_error(f"Failed to process video: {url}", e)

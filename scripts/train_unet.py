@@ -38,7 +38,7 @@ from remucs.model.vae import VQVAE, VQVAEConfig
 
 import wandb
 
-from .test_vqvae import save_vae_output_to_audio
+from .test_vqvae import vae_output_to_audio
 
 def ass():
     import torch
@@ -234,7 +234,8 @@ def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DD
             latents = scheduler.step(noise_pred, t, latents, return_dict=False)[0]
         latents = latents / VAE_SCALING_FACTOR
         images = vae.decode(latents)
-    save_vae_output_to_audio(sample_prefix, images)
+    audio = vae_output_to_audio(images)
+    audio.save(f"{sample_prefix}{t}.mp3")
 
 def save_model(accelerator: Accelerator,
                args: TrainingConfig,

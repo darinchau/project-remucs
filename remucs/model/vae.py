@@ -5,6 +5,10 @@ import torch
 from torch import nn, Tensor
 from dataclasses import dataclass
 from torch.utils.checkpoint import checkpoint
+import torch.nn.functional as F
+from ..util import SpectrogramCollection
+from ..constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
+from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 
 def get_time_embedding(time_steps: Tensor, temb_dim: int):
     r"""
@@ -454,3 +458,61 @@ class VQVAE(nn.Module):
         z, quant_losses = self.encode(x)
         out = self.decode(z)
         return out, z, quant_losses
+
+def vae_output_to_audio(images: Tensor):
+    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format"
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=TARGET_FEATURES,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format="png",
+    )
+
+    # Image shape is (4, 512, 512)
+    parts = {
+        "V": None,
+        "D": None,
+        "I": None,
+        "B": None,
+    }
+    for im, part in zip(images, "VDIB"):
+        audio = specs.spectrogram_to_audio(im[None], nframes = TARGET_NFRAMES * 4)
+        parts[part] = audio
+
+    return DemucsCollection(
+        vocals=parts["V"],
+        drums=parts["D"],
+        other=parts["I"],
+        bass=parts["B"],
+    )
+
+def gla_loss(output: Tensor, im: Tensor) -> Tensor:
+    """Calculates the Griffin-Lim loss between the original and reconstructed audio tensor.
+
+    Assumes both tensors are in (B, 4, 512, 512) in the VDIB format or in (4, 512, 512).
+
+    Returns tensor of shape (B,) with the loss for each batch element, or a single tensor if B=1, on the same device as the output tensor.
+
+    Keep in mind this loss is not (yet) differentiable."""
+    output_device = output.device
+    output = output.detach().cpu()
+    im = im.detach().cpu()
+
+    if len(output.shape) == 4 and len(im.shape) == 4:
+        assert output.shape == im.shape, "orig and im must have the same shape, got {} and {}".format(output.shape, im.shape)
+
+        losses = []
+        for j in range(output.shape[0]):
+            loss = gla_loss(output[j], im[j])
+            losses.append(loss)
+        return torch.tensor(losses)
+
+    resonstructed_audio = vae_output_to_audio(output)
+    original_audio = vae_output_to_audio(im)
+    loss = F.mse_loss(resonstructed_audio.data, original_audio.data)
+    return loss.detach().to(output_device)
