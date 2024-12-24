@@ -42,8 +42,17 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32):
-    """Tests the VQVAE model on the test dataset"""
+def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_path: str, reconstructions: int = 3, batch_size: int = 32, first_n: int = 3):
+    """Tests the VQVAE model on the test dataset
+
+    Args:
+        config_path (str): Path to the configuration file
+        dataset_dir (str): Path to the dataset directory
+        lookup_table_path (str): Path to the lookup table
+        model_path (str): Path to the model checkpoint
+        reconstructions (int, optional): Number of reconstructions to save. Defaults to 3.
+        batch_size (int, optional): Batch size for the data loader. Defaults to 32.
+        first_n (int, optional): Number of batches to evaluate. Set to -1 to evaluate all. Defaults to 3."""
     config = read_config(config_path)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
@@ -88,9 +97,14 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
     codebook_losses = []
     losses = {}
 
-    reconstruction_idxs = random.sample(range(len(im_dataset)), k=reconstructions)
+    if first_n < 0:
+        first_n = len(data_loader)
+        reconstruction_idxs = random.sample(range(len(im_dataset)), k=reconstructions)
+    else:
+        reconstruction_idxs = random.sample(range(batch_size * first_n), k=reconstructions)
 
     print("Reconstructing: ", reconstruction_idxs)
+
 
     with torch.no_grad():
         for i, im in tqdm(enumerate(data_loader), total=len(data_loader)):
