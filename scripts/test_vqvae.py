@@ -106,7 +106,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str, model_p
     print("Reconstructing: ", reconstruction_idxs)
 
     with torch.no_grad():
-        for i, im in tqdm(enumerate(data_loader), total=len(data_loader)):
+        for i, im in tqdm(enumerate(data_loader), total=first_n):
             im = im.float().to(device)
             im = im.mean(dim=2)
 
