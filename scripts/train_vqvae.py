@@ -124,12 +124,11 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
-    scaler = GradScaler()
 
     accelerator = Accelerator(mixed_precision="bf16")
 
-    model, optimizer_g, data_loader, scaler, optimizer_d = accelerator.prepare(
-        model, optimizer_g, data_loader, scaler, optimizer_d
+    model, optimizer_g, data_loader, optimizer_d = accelerator.prepare(
+        model, optimizer_g, data_loader, optimizer_d
     )
 
     disc_step_start = train_config['disc_start']
@@ -139,11 +138,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
     # And one cant afford higher batch sizes
     acc_steps = train_config['autoencoder_acc_steps']
     image_save_steps = train_config['autoencoder_img_save_steps']
-
-    # Keep track of the saved specs and stuff
-    saved_vaes = []
-    saved_discs = []
-    max_allowed_ckpts = train_config["max_allowed_ckpts"]
 
     val_steps = train_config['val_steps']
 
@@ -178,7 +172,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
             step_count += 1
             im = im.float().to(device)
 
-            # im is (4, 4, 2, 512, 512) -> take only the magnitude
+            # im is (4, 4, 2, 512, 512) -> take the mean of two channels
             im = im.mean(dim=2)
 
             # Fetch autoencoders output(reconstructions)
@@ -192,19 +186,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 disc_save_path = os.path.join(base_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
                 torch.save(model.state_dict(), model_save_path)
                 torch.save(discriminator.state_dict(), disc_save_path)
-                saved_vaes.append(model_save_path)
-                saved_discs.append(model_save_path)
-                while len(os.listdir(base_dir)) > max_allowed_ckpts and len(saved_vaes) > 1 and len(saved_discs) > 1:
-                    first_saved_vae = saved_vaes.pop(0)
-                    first_saved_disc = saved_discs.pop(0)
-                    try:
-                        os.remove(first_saved_vae)
-                        os.remove(first_saved_disc)
-                    except Exception as e:
-                        print("Failed to remove checkpoint from folder.")
-                        saved_vaes.insert(0, first_saved_vae)
-                        saved_discs.insert(0, first_saved_disc)
-                        break
 
             ######### Optimize Generator ##########
             # L2 Loss
@@ -227,7 +208,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
 
             # Perceptual Loss
-            lpips_loss = torch.mean(perceptual_loss(output, im))
+            lpips_loss = torch.mean(perceptual_loss(output, im, normalize=True))
             perceptual_losses.append(train_config['perceptual_weight'] * lpips_loss.item())
             g_loss += train_config['perceptual_weight']*lpips_loss / acc_steps
 
@@ -280,8 +261,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                         val_count_ += 1
                         if val_count_ > val_count:
                             break
-                        val_im = val_im.float().to(device)
-                        val_im = val_im[:, :, 0]
+                        val_im = val_im.float().to(device).mean(dim=2)
                         val_model_output = model(val_im)
                         val_output, _, val_quantize_losses = val_model_output
 
@@ -328,19 +308,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
         disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
         torch.save(model.state_dict(), model_save_path)
         torch.save(discriminator.state_dict(), disc_save_path)
-        saved_vaes.append(model_save_path)
-        saved_discs.append(model_save_path)
-        while len(os.listdir(base_dir)) > max_allowed_ckpts and len(saved_vaes) > 1 and len(saved_discs) > 1:
-            first_saved_vae = saved_vaes.pop(0)
-            first_saved_disc = saved_discs.pop(0)
-            try:
-                os.remove(first_saved_vae)
-                os.remove(first_saved_disc)
-            except Exception as e:
-                print("Failed to remove checkpoint from folder.")
-                saved_vaes.insert(0, first_saved_vae)
-                saved_discs.insert(0, first_saved_disc)
-                break
 
     wandb.finish()
     print('Done Training...')
