@@ -8,6 +8,7 @@ ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
 REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
 DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
 REJECTED_SPECTROGRAMS_PATH = os.path.join(DATASET_PATH, "rejected_spectrograms.txt")
+PROCESSED_PATH = os.path.join(DATASET_PATH, "processed.txt")
 PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
 SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
 AUDIO_SAVE_PATH = os.path.join(DATASET_PATH, "audio")
