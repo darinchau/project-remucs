@@ -37,13 +37,16 @@ def load_vae(vae_ckpt_path: str, vae_config_path: str, device: torch.device):
     return model
 
 def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base_dir: str, *, start_from_iter: int = 0,
-          dataset_params, train_params, autoencoder_params):
+          dataset_params = None, train_params = None, autoencoder_params = None):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     config = read_config(vae_config_path)
-    config['dataset_params'].update(dataset_params)
-    config['train_params'].update(train_params)
-    config['autoencoder_params'].update(autoencoder_params)
+    if dataset_params is not None:
+        config['dataset_params'].update(dataset_params)
+    if train_params is not None:
+        config['train_params'].update(train_params)
+    if autoencoder_params is not None:
+        config['autoencoder_params'].update(autoencoder_params)
 
     model = load_vae(vae_ckpt_path, vae_config_path, device)
     model.eval()
