@@ -123,7 +123,7 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
         discriminator.load_state_dict(disc_sd)
         step_count = start_from_iter
 
-    model_save_steps = train_config['image_save_steps']
+    model_save_steps = train_config['autoencoder_img_save_steps']
 
     wandb.init(
         # set the wandb project where this run will be logged
