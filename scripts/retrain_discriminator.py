@@ -107,9 +107,6 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
 
     # This is for accumulating gradients incase the images are huge
     acc_steps = train_config['autoencoder_acc_steps']
-    saved_discs = []
-    max_allowed_ckpts = train_config["max_allowed_ckpts"]
-
     val_steps = train_config['val_steps']
 
     # Reload checkpoint
