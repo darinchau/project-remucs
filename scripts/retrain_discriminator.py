@@ -13,7 +13,7 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torch import nn, Tensor
 from torch.amp.autocast_mode import autocast
-from torch.amp.grad_scaler import GradScaler
+import torch.nn.functional as F
 import wandb
 import pickle
 from accelerate import Accelerator
@@ -97,7 +97,6 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
         os.makedirs(base_dir)
 
     num_epochs = train_config['epochs']
-    loss = nn.MSELoss()
 
     discriminator = Discriminator().to(device)
 
@@ -109,7 +108,6 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
         model, data_loader, optimizer_d
     )
 
-    disc_step_start = train_config['disc_start']
     step_count = 0
 
     # This is for accumulating gradients incase the images are huge
@@ -132,7 +130,6 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
     )
 
     for epoch_idx in range(num_epochs):
-        losses = []
         optimizer_d.zero_grad()
 
         for im in tqdm(data_loader):
@@ -140,8 +137,9 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
             im = im.float().to(device).mean(dim=2)
 
             # Fetch autoencoders output(reconstructions)
-            with autocast('cuda'):
-                model_output = model(im)
+            with torch.no_grad():
+                with autocast('cuda'):
+                    model_output = model(im)
             output: Tensor
             output, _, _ = model_output
 
@@ -151,21 +149,23 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
                 torch.save(discriminator.state_dict(), disc_save_path)
 
             fake = output
+
             disc_fake_pred: Tensor = discriminator(fake.detach())
+            disc_fake_loss = F.binary_cross_entropy_with_logits(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+            accelerator.backward(disc_fake_loss / acc_steps)
+
             disc_real_pred: Tensor = discriminator(im)
-            disc_fake_loss = loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
-            disc_real_loss = loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
-            disc_loss = (disc_fake_loss + disc_real_loss) / 2
-            losses.append(disc_loss.item())
-            disc_loss = disc_loss / acc_steps
-            accelerator.backward(disc_loss)
+            disc_real_loss = F.binary_cross_entropy_with_logits(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
+            accelerator.backward(disc_real_loss / acc_steps)
+
             if step_count % acc_steps == 0:
                 optimizer_d.step()
                 optimizer_d.zero_grad()
 
             # Log losses
             wandb.log({
-                "MSE Loss": disc_loss.item()
+                "Real MSE Loss": disc_real_loss.item(),
+                "Fake MSE Loss": disc_fake_loss.item(),
             }, step=step_count)
 
             ########### Perform Validation #############
@@ -174,7 +174,8 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
                 model.eval()
                 discriminator.eval()
                 with torch.no_grad():
-                    losses = []
+                    real_loss = []
+                    fake_loss = []
                     for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})", total=min(val_count, len(val_data_loader))):
                         val_count_ += 1
                         if val_count_ > val_count:
@@ -186,13 +187,16 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
                         output, _, _ = model_output
                         fake = output
                         disc_fake_pred: Tensor = discriminator(fake.detach())
+                        disc_fake_loss = F.binary_cross_entropy_with_logits(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+
                         disc_real_pred: Tensor = discriminator(val_im)
-                        disc_fake_loss = loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
-                        disc_real_loss = loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
-                        disc_loss = (disc_fake_loss + disc_real_loss) / 2
-                        losses.append(disc_loss.item())
+                        disc_real_loss = F.binary_cross_entropy_with_logits(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
+
+                        real_loss.append(disc_real_loss.item())
+                        fake_loss.append(disc_fake_loss.item())
                     wandb.log({
-                        "Validation MSE Loss": np.mean(losses)
+                        "Validation Real MSE Loss": np.mean(real_loss),
+                        "Validation Fake MSE Loss": np.mean(fake_loss),
                     }, step=step_count)
                 discriminator.train()
 
