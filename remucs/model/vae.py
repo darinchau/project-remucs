@@ -489,50 +489,6 @@ class PatchGAN(nn.Module):
             out = layer(out)
         return out
 
-class ConvPatchGAN(nn.Module):
-    """This uses the idea of PatchGAN but changes the architecture to use Conv2d layers on each bar (4, 128, 512) patches
-
-    Assumes input is of shape (B, 4, 512, 512), outputs a tensor of shape (B, 4, 4)"""
-    def __init__(self):
-        super(ConvPatchGAN, self).__init__()
-        # Define a simple CNN architecture for each patch
-        self.conv1 = nn.Conv2d(4, 16, kernel_size=3, padding=1)  # Output: (B, 16, 128, 512)
-        self.pool1 = nn.MaxPool2d((2, 2))                        # Output: (B, 16, 64, 256)
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1) # Output: (B, 32, 64, 256)
-        self.pool2 = nn.MaxPool2d((2, 2))                        # Output: (B, 32, 32, 128)
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # Output: (B, 64, 32, 128)
-        self.pool3 = nn.MaxPool2d((4, 4))                        # Output: (B, 64, 8, 32)
-        self.conv4 = nn.Conv2d(64, 4, kernel_size=3, padding=1)  # Output: (B, 4, 8, 32)
-        self.global_pool = nn.AdaptiveAvgPool2d((1, 1))          # Output: (B, 4, 1, 1)
-
-    def forward(self, x: Tensor):
-        # x shape: (B, 4, 512, 512)
-        # Splitting along the T axis into 4 patches
-        patches = x.unfold(2, TARGET_FEATURES//4, TARGET_FEATURES//4)  # Output: (B, 4, 4, 128, 512)
-        patches = patches.permute(0, 2, 1, 3, 4)  # Reorder to (B, 4, 4, 128, 512)
-
-        # Process each patch
-        batch_size, num_patches, channels, height, width = patches.size()
-        patches = patches.reshape(-1, channels, height, width)  # Flatten patches for batch processing
-
-        # Apply CNN
-        x = self.conv1(patches)
-        x = F.relu(x)
-        x = self.pool1(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = self.pool2(x)
-        x = self.conv3(x)
-        x = F.relu(x)
-        x = self.pool3(x)
-        x = self.conv4(x)
-        x = F.relu(x)
-        x = self.global_pool(x)  # Output: (B*4, 4, 1, 1)
-
-        # Reshape to get the final output size (B, 4, 4)
-        x = x.view(batch_size, num_patches, channels, -1).squeeze(-1).squeeze(-1)
-        return x
-
 def vae_output_to_audio(images: Tensor):
     assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format, got {}".format(images.shape)
     specs = SpectrogramCollection(
