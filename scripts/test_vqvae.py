@@ -22,7 +22,8 @@ from remucs.dataset import load_dataset
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 import torch.nn.functional as F
 
-from .calculate import SpectrogramCollection, TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
+from remucs.constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
+from remucs.spectrogram import SpectrogramCollection
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 

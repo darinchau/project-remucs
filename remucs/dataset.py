@@ -2,7 +2,7 @@
 
 import os
 import torch
-from .util import SpectrogramCollection, PartIDType
+from .spectrogram import SpectrogramCollection, PartIDType
 import json
 from torch.utils.data import Dataset
 from p_tqdm import p_umap

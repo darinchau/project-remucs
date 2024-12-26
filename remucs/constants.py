@@ -1,19 +1,6 @@
 # This specifies the constants used in the project and the structure of the dataset
 import os
 
-# Path stuff
-DATASET_PATH = "D:/Repository/project-remucs/audio-infos-v3"
-DATAFILE_PATH = os.path.join(DATASET_PATH, "datafiles")
-ERROR_LOGS_PATH = os.path.join(DATASET_PATH, "error_logs.txt")
-REJECTED_FILES_PATH = os.path.join(DATASET_PATH, "rejected_urls.txt")
-DEFERRED_FILES_PATH = os.path.join(DATASET_PATH, "deferred_urls.txt")
-REJECTED_SPECTROGRAMS_PATH = os.path.join(DATASET_PATH, "rejected_spectrograms.txt")
-PROCESSED_PATH = os.path.join(DATASET_PATH, "processed.txt")
-PLAYLIST_QUEUE_PATH = "./scripts/playlist_queue.txt"
-SPECTROGRAM_SAVE_PATH = os.path.join(DATASET_PATH, "spectrograms")
-AUDIO_SAVE_PATH = os.path.join(DATASET_PATH, "audio")
-LIST_SPLIT_SIZE = 300
-
 # Config for the spectrogram part of the data collection
 # The math works out such that if we make the hop length 512, BPM 120
 # and sample rate 32768
@@ -31,3 +18,8 @@ TARGET_NFRAMES = int(TARGET_SR * TARGET_DURATION)
 NFFT = TARGET_FEATURES * 2 - 1
 BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
+
+# Canonical keys for dataset infos
+REJECTED_URLS = "rejected_urls"
+CANDIDATE_URLS = "candidate_urls"
+PROCESSED_URLS = "processed_urls"
