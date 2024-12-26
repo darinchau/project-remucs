@@ -44,7 +44,7 @@ def set_seed(seed: int):
 
 def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
              model_path: str, reconstructions: int = 3, batch_size: int = 32, first_n: int = 3,
-             compute_griffin_lim: bool = False):
+             compute_griffin_lim: bool = False, return_specs: bool = False):
     """Tests the VQVAE model on the test dataset
 
     Args:
@@ -55,7 +55,8 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
         reconstructions (int, optional): Number of reconstructions to save. Defaults to 3.
         batch_size (int, optional): Batch size for the data loader. Defaults to 32.
         first_n (int, optional): Number of batches to evaluate. Set to -1 to evaluate all. Defaults to 3.
-        compute_griffin_lim (bool, optional): Whether to compute the Griffin-Lim loss. Defaults to False."""
+        compute_griffin_lim (bool, optional): Whether to compute the Griffin-Lim loss. Defaults to False.
+        return_specs (bool, optional): Whether to return the spectrograms. Defaults to False."""
     config = read_config(config_path)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
@@ -101,6 +102,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
     codebook_losses = []
     griffin_lim_losses = []
     losses = {}
+    returns = {}
 
     if first_n < 0:
         first_n = len(data_loader)
@@ -154,6 +156,12 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
                 x: losses[i][x] for x in losses[i] if "loss" in x.lower()
             })
 
+            if return_specs:
+                returns[i] = {
+                    'output': output,
+                    'im': im
+                }
+
             if i == first_n - 1:
                 break
 
@@ -165,3 +173,5 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
         print("Griffin-Lim Loss: ", np.mean(griffin_lim_losses))
 
     print(losses)
+
+    return returns
