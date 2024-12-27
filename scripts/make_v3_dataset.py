@@ -30,7 +30,6 @@ from AutoMasher.fyp.audio import DemucsCollection, Audio
 from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, ChordAnalysisResult, analyse_beat_transformer, analyse_chord_transformer
 from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder, SongDatasetEncoder, FastSongDatasetEncoder
-from AutoMasher.fyp.audio.dataset.base import LocalSongDataset
 from AutoMasher.fyp.audio.dataset.create import (
     verify_beats_result,
     verify_chord_result,
@@ -39,6 +38,7 @@ from AutoMasher.fyp.audio.dataset.create import (
 )
 from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL, to_youtube
 from remucs.spectrogram import SpectrogramCollection, process_spectrogram_features
+from remucs.song import LocalSongDatasetWithSpectrograms
 from remucs.constants import (
     BEAT_MODEL_PATH,
     CHORD_MODEL_PATH,
@@ -54,7 +54,7 @@ from .get_candidate_urls import (
     LIST_SPLIT_SIZE,
 )
 
-def download_audio(ds: LocalSongDataset, urls: list[YouTubeURL], print_fn = print):
+def download_audio(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], print_fn = print):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
     def download_audio_single(url: YouTubeURL) -> Audio | str:
         length = url.get_length()
@@ -82,7 +82,7 @@ def download_audio(ds: LocalSongDataset, urls: list[YouTubeURL], print_fn = prin
                 ds.write_error(f"Failed to download audio: {url}", e)
                 continue
 
-def process_batch(ds: LocalSongDataset, urls: list[YouTubeURL], *,
+def process_batch(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], *,
                   demucs: DemucsAudioSeparator,
                   entry_encoder: DatasetEntryEncoder,
                   spec_processes: dict[YouTubeURL, Thread],
@@ -111,7 +111,7 @@ def process_batch(ds: LocalSongDataset, urls: list[YouTubeURL], *,
         clear_cuda()
 
         try:
-            audio_path = os.path.join(ds.audio_path, f"{url.video_id}.mp3")
+            audio_path = ds.get_audio_path(url)
             audio.save(audio_path)
             audio = Audio.load(audio_path)
         except Exception as e:
@@ -170,7 +170,7 @@ def process_batch(ds: LocalSongDataset, urls: list[YouTubeURL], *,
 
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
-    ds = LocalSongDataset(root_dir, load_on_the_fly=True)
+    ds = LocalSongDatasetWithSpectrograms(root_dir, load_on_the_fly=True)
 
     entry_encoder = DatasetEntryEncoder()
     demucs = DemucsAudioSeparator()
