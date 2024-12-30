@@ -34,12 +34,10 @@ except ImportError:
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre
 from AutoMasher.fyp.audio import DemucsCollection, Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
-from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder
-from AutoMasher.fyp.audio.dataset.create import process_audio as process_audio_features
+from AutoMasher.fyp.audio.dataset import SongDataset
 from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL, to_youtube
 
 from remucs.util import Result
-from AutoMasher.fyp.audio.dataset.base import LocalSongDataset
 
 ## More dataset specifications
 MAX_SONG_LENGTH = 480
@@ -97,7 +95,7 @@ def cleanup_temp_dir():
                 except Exception as e:
                     print(f"Failed to delete file: {file_path}")
 
-def filter_audios(ds: LocalSongDataset, urls: list[YouTubeURL], genre: SongGenre, description: str = ""):
+def filter_audios(ds: SongDataset, urls: list[YouTubeURL], genre: SongGenre, description: str = ""):
     t = time.time()
     last_t = None
     clear_output()
@@ -124,7 +122,7 @@ def filter_audios(ds: LocalSongDataset, urls: list[YouTubeURL], genre: SongGenre
             ds.write_info(REJECTED_URLS, url, filter_result.error)
             continue
 
-        ds.write_info(CANDIDATE_URLS, url, genre.value)
+        ds.write_info(CANDIDATE_URLS, url, str(genre.to_int()))
 
     cleanup_temp_dir()
 
@@ -176,7 +174,7 @@ def get_playlist_title_and_video(key: str) -> tuple[str, list[YouTubeURL]]:
     raise ValueError(f"Invalid channel or playlist: {key} (Playlist error: {e1}, Channel error: {e2})")
 
 # Calculates features for an entire playlist. Returns false if the calculation fails at any point
-def get_playlist_video_urls(ds: LocalSongDataset, playlist_url: str):
+def get_playlist_video_urls(ds: SongDataset, playlist_url: str):
     """Yields a series of URLs for us to calculate the features of."""
     clear_output()
 
@@ -211,7 +209,7 @@ def get_playlist_video_urls(ds: LocalSongDataset, playlist_url: str):
             print(e)
             pass
 
-def get_processed_urls(ds: LocalSongDataset):
+def get_processed_urls(ds: SongDataset) -> set[YouTubeURL]:
     """Gets the processed URLs from the dataset."""
     return ds.read_info_urls(CANDIDATE_URLS)
 
@@ -271,8 +269,7 @@ def main(playlist_queue_path: str, root_dir: str):
 
     clean_playlist_queue(playlist_queue_path)
 
-    ds = LocalSongDataset(root_dir)
-
+    ds = SongDataset(root_dir)
     urls: list[YouTubeURL] = []
 
     # Phase 1: Calculate the playlist urls

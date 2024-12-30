@@ -20,6 +20,6 @@ BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
 # Canonical keys for dataset infos
-REJECTED_URLS = "rejected_urls"
-CANDIDATE_URLS = "candidate_urls"
-PROCESSED_URLS = "processed_urls"
+REJECTED_URLS = "_project_remucs_rejected_urls"
+CANDIDATE_URLS = "_project_remucs_candidate_urls"
+PROCESSED_URLS = "_project_remucs_processed_urls"

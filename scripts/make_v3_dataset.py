@@ -25,20 +25,14 @@ except ImportError:
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
-from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre
-from AutoMasher.fyp.audio import DemucsCollection, Audio
-from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
-from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, ChordAnalysisResult, analyse_beat_transformer, analyse_chord_transformer
-from AutoMasher.fyp.audio.dataset.v3 import DatasetEntryEncoder, SongDatasetEncoder, FastSongDatasetEncoder
-from AutoMasher.fyp.audio.dataset.create import (
-    verify_beats_result,
-    verify_chord_result,
-    verify_parts_result,
-    create_entry,
+from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre, SongDataset, create_entry, DatasetEntryEncoder
+from AutoMasher.fyp import Audio
+from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
+from AutoMasher.fyp.util import (
+    clear_cuda,
+    YouTubeURL,
 )
-from AutoMasher.fyp.util import is_ipython, clear_cuda, get_url, YouTubeURL, to_youtube
-from remucs.spectrogram import SpectrogramCollection, process_spectrogram_features
-from remucs.song import LocalSongDatasetWithSpectrograms
+
 from remucs.constants import (
     BEAT_MODEL_PATH,
     CHORD_MODEL_PATH,
@@ -47,6 +41,8 @@ from remucs.constants import (
     PROCESSED_URLS,
 )
 
+from remucs.spectrogram import process_spectrogram_features
+
 from .get_candidate_urls import (
     MAX_SONG_LENGTH,
     MIN_SONG_LENGTH,
@@ -54,7 +50,7 @@ from .get_candidate_urls import (
     LIST_SPLIT_SIZE,
 )
 
-def download_audio(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], print_fn = print):
+def download_audio(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], print_fn = print):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
     def download_audio_single(url: YouTubeURL) -> Audio | str:
         length = url.get_length()
@@ -65,9 +61,9 @@ def download_audio(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL],
 
     # Downloads the things concurrently and yields them one by one
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(download_audio_single, url): url for url in urls}
+        futures = {executor.submit(download_audio_single, url): (url, genre) for (url, genre) in urls}
         for future in as_completed(futures):
-            url = futures[future]
+            url, genre = futures[future]
             try:
                 audio = future.result()
                 if isinstance(audio, str):
@@ -77,13 +73,12 @@ def download_audio(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL],
                     ds.write_info(REJECTED_URLS, url, f"Song too long or too short ({audio.duration})")
                     continue
                 print_fn(f"Downloaded audio: {url}")
-                yield audio, url
+                yield audio, url, genre
             except Exception as e:
                 ds.write_error(f"Failed to download audio: {url}", e)
                 continue
 
-def process_batch(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], *,
-                  demucs: DemucsAudioSeparator,
+def process_batch(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], *,
                   entry_encoder: DatasetEntryEncoder,
                   spec_processes: dict[YouTubeURL, Thread],
                   print_fn = print):
@@ -91,7 +86,7 @@ def process_batch(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], 
     t = time.time()
     last_t = None
 
-    for i, (audio, url) in tqdm(enumerate(audios), total=len(urls)):
+    for i, (audio, url, genre) in tqdm(enumerate(audios), total=len(urls)):
         ds.write_info(PROCESSED_URLS, url)
         if audio is None:
             continue
@@ -110,49 +105,21 @@ def process_batch(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], 
 
         clear_cuda()
 
-        try:
-            audio_path = ds.get_audio_path(url)
-            audio.save(audio_path)
-            audio = Audio.load(audio_path)
-        except Exception as e:
-            ds.write_error(f"Failed to save audio: {url}", e)
-            ds.write_info(REJECTED_URLS, url, "Failed to save and load audio")
-            continue
-
-        video_id = url.video_id
-
-        ct = analyse_chord_transformer(audio, model_path=CHORD_MODEL_PATH)
-        error = verify_chord_result(ct, audio.duration, url)
-        if error:
-            print_fn(f"Chords error ({video_id}): {error}")
-            continue
-
-        parts = demucs.separate(audio)
-        error = verify_parts_result(parts, 0.1, url)
-        if error:
-            print_fn(f"Parts error ({video_id}): {error}")
-            continue
-
-        bt = analyse_beat_transformer(audio, parts, model_path=BEAT_MODEL_PATH)
-        error = verify_beats_result(bt, audio.duration, url, reject_weird_meter=False)
-        if error:
-            print_fn(f"Beats error ({video_id}): {error}")
-            continue
-
         dataset_entry = create_entry(
-            length=audio.duration,
-            beats=bt.beats.tolist(),
-            downbeats=bt.downbeats.tolist(),
-            chords=ct.labels.tolist(),
-            chord_times=ct.times.tolist(),
-            genre=dataset_entry.genre,
             url=url,
-            views=dataset_entry.views
+            dataset=ds,
+            audio=audio,
+            genre=genre,
         )
 
-        ds.add_entry(dataset_entry)
+        entry_encoder.write_to_path(
+            dataset_entry,
+            ds.get_path("datafiles", url)
+        )
 
-        spec_save_path = os.path.join(ds.spectrogram_path, f"{video_id}.spec.zip")
+        spec_save_path = ds.get_path("spectrograms", url)
+        parts = ds.get_parts(url)
+        bt = BeatAnalysisResult(dataset_entry.beats, dataset_entry.downbeats)
         thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, bt, spec_save_path))
         thread.start()
         spec_processes[url] = thread
@@ -167,31 +134,39 @@ def process_batch(ds: LocalSongDatasetWithSpectrograms, urls: list[YouTubeURL], 
         print_fn(f"{len(spec_processes)} threads remaining")
         print_fn(f"Waiting for the next entry...")
 
-
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
-    ds = LocalSongDatasetWithSpectrograms(root_dir, load_on_the_fly=True)
+    ds = SongDataset(root_dir, load_on_the_fly=True)
+
+    ds.register("spectrograms", "{video_id}.spec.zip")
 
     entry_encoder = DatasetEntryEncoder()
-    demucs = DemucsAudioSeparator()
     spec_processes = {}
 
-    candidate_urls = ds.read_info_urls(CANDIDATE_URLS) - ds.read_info_urls(REJECTED_URLS) - ds.read_info_urls(PROCESSED_URLS)
+    def get_candidate_urls():
+        candidates = ds.read_info(CANDIDATE_URLS)
+        assert isinstance(candidates, dict)
+        finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
+        candidates = {c: SongGenre.from_int(int(v)) for c, v in candidates.items() if c not in finished}
+        return candidates
+
+    candidate_urls = get_candidate_urls()
     print(f"Loading dataset from {ds} ({len(candidate_urls)} candidate entries)")
     process_bar = tqdm(desc="Processing candidates", total=len(candidate_urls))
 
     while True:
-        url_batch = sorted(candidate_urls)[:LIST_SPLIT_SIZE]
+        # Get the dict with the first LIST_SPLIT_SIZE elements sorted by key
+        url_batch = sorted(candidate_urls.items(), key=lambda x: x[0])[:LIST_SPLIT_SIZE]
         if not url_batch:
             break
         try:
-            process_batch(ds, url_batch, entry_encoder=entry_encoder, demucs=demucs, spec_processes=spec_processes)
+            process_batch(ds, url_batch, entry_encoder=entry_encoder, spec_processes=spec_processes)
         except Exception as e:
             ds.write_error("Failed to process batch", e)
             traceback.print_exc()
 
         nbefore = len(candidate_urls)
-        candidate_urls = ds.read_info_urls(CANDIDATE_URLS) - ds.read_info_urls(REJECTED_URLS) - ds.read_info_urls(PROCESSED_URLS)
+        candidate_urls = get_candidate_urls()
         nafter = len(candidate_urls)
         process_bar.update(nbefore - nafter)
 

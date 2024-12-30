@@ -267,13 +267,15 @@ class SpectrogramCollection:
                                 ) # Returns numpy array (2, T)
         return Audio(torch.from_numpy(data_np), self.sample_rate)
 
-def process_spectrogram_features(audio: Audio, url: YouTubeURL, parts: DemucsCollection,
+def process_spectrogram_features(audio: Audio,
+                                 url: YouTubeURL,
+                                 parts: DemucsCollection,
                                  br: BeatAnalysisResult, save_path: str | None = None, format: str = "png") -> Result[SpectrogramCollection]:
     """Processes the spectrogram features of the audio and saves it to the save path.
     If save_path is None, the spectrogram will not be saved to disk."""
     # Sanity check
-    if not isclose(audio.duration, br.get_duration()):
-        raise ValueError(f"Audio duration and beat analysis duration mismatch: {audio.duration} {br.get_duration()}")
+    if not isclose(audio.duration, br.duration):
+        raise ValueError(f"Audio duration and beat analysis duration mismatch: {audio.duration} {br.duration}")
 
     if not isclose(audio.duration, parts.get_duration()):
         raise ValueError(f"Audio duration and parts duration mismatch: {audio.duration} {parts.get_duration()}")
