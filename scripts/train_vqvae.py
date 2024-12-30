@@ -201,9 +201,10 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
             # Adversarial loss only if disc_step_start steps passed
             if step_count > disc_step_start:
                 disc_fake_pred = discriminator(model_output[0])
-                disc_fake_loss = discriminator_loss(disc_fake_pred,
-                                                torch.ones(disc_fake_pred.shape,
-                                                           device=disc_fake_pred.device))
+                disc_fake_loss = discriminator_loss(
+                    disc_fake_pred,
+                    torch.ones(disc_fake_pred.shape, device=disc_fake_pred.device)
+                )
                 gen_losses.append(train_config['disc_weight'] * disc_fake_loss.item())
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
 
@@ -221,12 +222,14 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 fake = output
                 disc_fake_pred = discriminator(fake.detach())
                 disc_real_pred = discriminator(im)
-                disc_fake_loss = discriminator_loss(disc_fake_pred,
-                                                torch.zeros(disc_fake_pred.shape,
-                                                            device=disc_fake_pred.device))
-                disc_real_loss = discriminator_loss(disc_real_pred,
-                                                torch.ones(disc_real_pred.shape,
-                                                           device=disc_real_pred.device))
+                disc_fake_loss = discriminator_loss(
+                    disc_fake_pred,
+                    torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device)
+                )
+                disc_real_loss = discriminator_loss(
+                    disc_real_pred,
+                    torch.ones(disc_real_pred.shape, device=disc_real_pred.device)
+                )
                 disc_loss = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
                 disc_losses.append(disc_loss.item())
                 disc_loss = disc_loss / acc_steps
