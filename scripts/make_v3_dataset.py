@@ -43,19 +43,11 @@ from remucs.constants import (
 
 from remucs.spectrogram import process_spectrogram_features
 
-from .get_candidate_urls import (
-    MAX_SONG_LENGTH,
-    MIN_SONG_LENGTH,
-    MIN_VIEWS,
-    LIST_SPLIT_SIZE,
-)
+LIST_SPLIT_SIZE = 300
 
 def download_audio(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], print_fn = print):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
-    def download_audio_single(url: YouTubeURL) -> Audio | str:
-        length = url.get_length()
-        if length is not None and (length >= MAX_SONG_LENGTH or length < MIN_SONG_LENGTH):
-            return f"Song too long or too short ({length})"
+    def download_audio_single(url: YouTubeURL) -> Audio:
         audio = Audio.load(url)
         return audio
 
@@ -68,9 +60,6 @@ def download_audio(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], pr
                 audio = future.result()
                 if isinstance(audio, str):
                     ds.write_info(REJECTED_URLS, url, audio)
-                    continue
-                if audio.duration >= MAX_SONG_LENGTH or audio.duration < MIN_SONG_LENGTH:
-                    ds.write_info(REJECTED_URLS, url, f"Song too long or too short ({audio.duration})")
                     continue
                 print_fn(f"Downloaded audio: {url}")
                 yield audio, url, genre
@@ -136,7 +125,7 @@ def process_batch(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], *,
 
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
-    ds = SongDataset(root_dir, load_on_the_fly=True)
+    ds = SongDataset(root_dir, load_on_the_fly=True, max_dir_size=None)
 
     ds.register("spectrograms", "{video_id}.spec.zip")
 
