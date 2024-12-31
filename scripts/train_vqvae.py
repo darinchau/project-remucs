@@ -13,7 +13,6 @@ from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torch import nn, Tensor
 from torch.amp.autocast_mode import autocast
-from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
@@ -40,14 +39,18 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, start_from_iter: int = 0):
-    """Trains the VAE
+def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, start_from_iter: int = 0,
+          dataset_params = None, train_params = None, autoencoder_params = None):
+    """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-    config_path: str - Path to the config file
-    base_dir: str - Path to the directory where the model checkpoints will be saved
-    dataset_dir: str - Paths to the directory where the backup dataset is stored"""
-    # Read the config file
     config = read_config(config_path)
+    if dataset_params is not None:
+        config['dataset_params'].update(dataset_params)
+    if train_params is not None:
+        config['train_params'].update(train_params)
+    if autoencoder_params is not None:
+        config['autoencoder_params'].update(autoencoder_params)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
 
@@ -153,7 +156,7 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="vqvae_training-3",
+        project=train_config['run_name'],
         config=config
     )
 

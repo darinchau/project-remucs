@@ -43,4 +43,5 @@ train_params:
   autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
+  run_name: "vqvae-training-3"
   val_steps: 2048

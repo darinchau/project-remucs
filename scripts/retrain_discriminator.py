@@ -129,7 +129,7 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
 
     wandb.init(
         # set the wandb project where this run will be logged
-        project="discriminator-training-1",
+        project=train_config['run_name'],
         config=config
     )
 
