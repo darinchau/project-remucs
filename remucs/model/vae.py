@@ -459,35 +459,59 @@ class VQVAE(nn.Module):
         out = self.decode(z)
         return out, z, quant_losses
 
-class PatchGAN(nn.Module):
-    """Implements patchGAN for adversarial loss"""
-    def __init__(self, im_channels,
-                 conv_channels=[64, 128, 256],
-                 kernels=[4,4,4,4],
-                 strides=[2,2,2,1],
-                 paddings=[1,1,1,1]):
-        super().__init__()
-        self.im_channels = im_channels
-        activation = nn.LeakyReLU(0.2)
-        layers_dim = [self.im_channels] + conv_channels + [1]
-        self.layers = nn.ModuleList([
-            nn.Sequential(
-                nn.Conv2d(layers_dim[i], layers_dim[i + 1],
-                          kernel_size=kernels[i],
-                          stride=strides[i],
-                          padding=paddings[i],
-                          bias=False if i !=0 else True),
-                nn.BatchNorm2d(layers_dim[i + 1]) if i != len(layers_dim) - 2 and i != 0 else nn.Identity(),
-                activation if i != len(layers_dim) - 2 else nn.Identity()
-            )
-            for i in range(len(layers_dim) - 1)
-        ])
+import torch
+from torch import nn, Tensor
+import torch.nn.functional as F
 
-    def forward(self, x):
-        out = x
-        for layer in self.layers:
-            out = layer(out)
-        return out
+TARGET_FEATURES = 512
+
+class SpectrogramPatchModel(nn.Module):
+    """This uses the idea of PatchGAN but changes the architecture to use Conv2d layers on each bar (4, 128, 512) patches
+
+    Assumes input is of shape (B, 4, 512, 512), outputs a tensor of shape (B, 4, 4)"""
+    def __init__(self, target_features: int = TARGET_FEATURES):
+        super(SpectrogramPatchModel, self).__init__()
+        # Define a simple CNN architecture for each patch
+        self.conv1 = nn.Conv2d(4, 16, kernel_size=3, padding=1)  # Output: (B, 16, 128, 512)
+        self.pool11 = nn.AdaptiveMaxPool2d((128, 256))
+        self.pool12 = nn.AdaptiveAvgPool2d((64, 256))
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1) # Output: (B, 32, 64, 256)
+        self.pool21 = nn.AdaptiveMaxPool2d((64, 128))
+        self.pool22 = nn.AdaptiveAvgPool2d((32, 128))
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # Output: (B, 64, 32, 128)
+        self.pool31 = nn.AdaptiveMaxPool2d((32, 32))
+        self.pool32 = nn.AdaptiveAvgPool2d((8, 32))
+        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Output: (B, 128, 8, 32)
+        self.fc = nn.Conv2d(128, 4, (8, 32)) # Equivalent to FC layers over each channel
+        self.target_features = target_features
+
+    def forward(self, x: Tensor):
+        # x shape: (B, 4, 512, 512)
+        # Splitting along the T axis into 4 patches
+        patches = x.unflatten(2, (x.size(2) // 128, 128))  # Output: (B, 4, 4, 128, 512)
+
+        # Process each patch
+        batch_size, num_patches, channels, height, width = patches.size()
+        patches = patches.reshape(-1, channels, height, width)  # Flatten patches for batch processing
+
+        # Apply CNN
+        x = self.conv1(patches)
+        x = F.relu(x)
+        x = self.pool11(x)
+        x = self.pool12(x)
+        x = self.conv2(x)
+        x = F.relu(x)
+        x = self.pool21(x)
+        x = self.pool22(x)
+        x = self.conv3(x)
+        x = F.relu(x)
+        x = self.pool31(x)
+        x = self.pool32(x)
+        x = self.conv4(x)
+        x = F.relu(x)
+        x = self.fc(x)
+        x = x.view(batch_size, num_patches, channels, -1).squeeze(-1).squeeze(-1)
+        return x
 
 def vae_output_to_audio(images: Tensor):
     assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format, got {}".format(images.shape)

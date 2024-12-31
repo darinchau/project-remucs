@@ -44,4 +44,6 @@ train_params:
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
   run_name: "vqvae-training-3"
+  mel_weight_recon_loss: False # If True, use mel filter bins to reweight the reconstruction loss
+  disc_loss: "bce" # "bce" or "mse"
   val_steps: 2048

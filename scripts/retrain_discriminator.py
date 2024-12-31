@@ -18,7 +18,7 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.model.vae import VQVAE, VQVAEConfig
-from remucs.model.vae import PatchGAN as Discriminator
+from remucs.model.vae import SpectrogramPatchModel as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
 
@@ -40,6 +40,8 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
           discriminator: nn.Module | None = None,
           dataset_params = None, train_params = None, autoencoder_params = None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
+    if discriminator is None:
+        discriminator = Discriminator()
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     config = read_config(vae_config_path)
@@ -99,9 +101,6 @@ def train(vae_ckpt_path: str, vae_config_path: str, local_dataset_dir: str, base
         os.makedirs(base_dir)
 
     num_epochs = train_config['epochs']
-
-    if discriminator is None:
-        discriminator = Discriminator(im_channels=dataset_config['im_channels'])
     discriminator = discriminator.to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))

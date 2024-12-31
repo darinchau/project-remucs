@@ -17,9 +17,10 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.model.vae import VQVAE, VQVAEConfig
-from remucs.model.vae import PatchGAN as Discriminator
+from remucs.model.vae import SpectrogramPatchModel as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.dataset import load_dataset
+import torch.nn.functional as F
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -39,7 +40,7 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, start_from_iter: int = 0,
+def train(config_path: str, base_dir: str, dataset_dir: str, *, start_from_iter: int = 0,
           dataset_params = None, train_params = None, autoencoder_params = None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -70,8 +71,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
     for p in model.parameters():
         numel += p.numel()
     print('Total number of parameters: {}'.format(numel))
-    if bail:
-        return
 
     # Create the dataset
     im_dataset = load_dataset(
@@ -114,16 +113,15 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
     num_epochs = train_config['epochs']
 
-    # TODO: Can try BCE with logits loss for discriminator???
     reconstruction_loss = torch.nn.MSELoss()
-    discriminator_loss = torch.nn.MSELoss()
+    disc_loss = torch.nn.BCEWithLogitsLoss() if train_config['disc_loss'] == 'bce' else torch.nn.MSELoss()
     perceptual_loss = load_lpips().eval().to(device)
 
     # Freeze perceptual loss parameters
     for param in perceptual_loss.parameters():
         param.requires_grad = False
 
-    discriminator = Discriminator(im_channels=dataset_config['im_channels']).to(device)
+    discriminator = Discriminator().to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
@@ -203,11 +201,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
 
             # Adversarial loss only if disc_step_start steps passed
             if step_count > disc_step_start:
-                disc_fake_pred = discriminator(model_output[0])
-                disc_fake_loss = discriminator_loss(
-                    disc_fake_pred,
-                    torch.ones(disc_fake_pred.shape, device=disc_fake_pred.device)
-                )
+                disc_fake_pred: Tensor = discriminator(model_output[0])
+                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 gen_losses.append(train_config['disc_weight'] * disc_fake_loss.item())
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
 
@@ -225,14 +220,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, bail = False, st
                 fake = output
                 disc_fake_pred = discriminator(fake.detach())
                 disc_real_pred = discriminator(im)
-                disc_fake_loss = discriminator_loss(
-                    disc_fake_pred,
-                    torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device)
-                )
-                disc_real_loss = discriminator_loss(
-                    disc_real_pred,
-                    torch.ones(disc_real_pred.shape, device=disc_real_pred.device)
-                )
+                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+                disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
                 disc_loss = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
                 disc_losses.append(disc_loss.item())
                 disc_loss = disc_loss / acc_steps
