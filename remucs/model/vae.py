@@ -105,7 +105,7 @@ class DownBlock(nn.Module):
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
                 if self.use_gradient_checkpointing:
-                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
                 else:
                     out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
@@ -185,7 +185,7 @@ class MidBlock(nn.Module):
             in_attn = self.attention_norms[i](in_attn)
             in_attn = in_attn.transpose(1, 2)
             if self.use_gradient_checkpointing:
-                out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+                out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
             else:
                 out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
             out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
@@ -282,7 +282,7 @@ class UpBlock(nn.Module):
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
                 if self.use_gradient_checkpointing:
-                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
                 else:
                     out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
