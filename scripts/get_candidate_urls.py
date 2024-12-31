@@ -65,6 +65,11 @@ def filter_song(yt: YouTubeURL) -> Result[None]:
         return Result.success(None)
 
     except Exception as e:
+        if "429" in str(e):
+            print("Too many requests. Waiting for 5 minutes...")
+            for _ in trange(600, desc="Waiting 5 minutes before we try again..."):
+                time.sleep(0.5)
+            return filter_song(yt)
         return Result.failure(f"Failed to filter song: {yt} {traceback.format_exception(e)}")
 
 def clear_output():
@@ -105,16 +110,16 @@ def filter_audios(ds: SongDataset, urls: list[YouTubeURL], genre: SongGenre, des
     for i, url in enumerate(urls):
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
         last_t = time.time()
-        print()
-        print(linesep * os.get_terminal_size().columns)
-        print(f"Current time: {datetime.datetime.now()}")
-        print(f"Current number of entries: {len(ds)} {i}/{len(urls)} for current batch.")
-        print(description)
-        print(f"Last entry process time: {last_entry_process_time} seconds")
-        print(f"Current entry: {url}")
-        print(f"Time elapsed: {round(time.time() - t, 2)} seconds")
-        print(f"Genre: {genre.value}")
-        print()
+        tqdm.write("")
+        tqdm.write(linesep * os.get_terminal_size().columns)
+        tqdm.write(f"Current time: {datetime.datetime.now()}")
+        tqdm.write(f"Current number of entries: {len(ds)} {i}/{len(urls)} for current batch.")
+        tqdm.write(description)
+        tqdm.write(f"Last entry process time: {last_entry_process_time} seconds")
+        tqdm.write(f"Current entry: {url}")
+        tqdm.write(f"Time elapsed: {round(time.time() - t, 2)} seconds")
+        tqdm.write(f"Genre: {genre.value}")
+        tqdm.write("")
 
         filter_result = filter_song(url)
         if not filter_result:
@@ -123,6 +128,8 @@ def filter_audios(ds: SongDataset, urls: list[YouTubeURL], genre: SongGenre, des
             continue
 
         ds.write_info(CANDIDATE_URLS, url, str(genre.to_int()))
+        while random.random() < 0.4:
+            time.sleep(1)
 
     cleanup_temp_dir()
 
@@ -173,7 +180,6 @@ def get_playlist_title_and_video(key: str) -> tuple[str, list[YouTubeURL]]:
 
     raise ValueError(f"Invalid channel or playlist: {key} (Playlist error: {e1}, Channel error: {e2})")
 
-# Calculates features for an entire playlist. Returns false if the calculation fails at any point
 def get_playlist_video_urls(ds: SongDataset, playlist_url: str):
     """Yields a series of URLs for us to calculate the features of."""
     clear_output()
@@ -188,7 +194,7 @@ def get_playlist_video_urls(ds: SongDataset, playlist_url: str):
     print(f"Number of processed URLs: {len(processed_urls)}")
 
     # Get all video url datas
-    for video_url in tqdm(video_urls, desc="Getting URLs from playlist..."):
+    for video_url in video_urls:
         if video_url not in processed_urls:
             yield video_url
             processed_urls.add(video_url)
@@ -211,7 +217,7 @@ def get_playlist_video_urls(ds: SongDataset, playlist_url: str):
 
 def get_processed_urls(ds: SongDataset) -> set[YouTubeURL]:
     """Gets the processed URLs from the dataset."""
-    return ds.read_info_urls(CANDIDATE_URLS)
+    return ds.read_info_urls(CANDIDATE_URLS) | ds.read_info_urls(REJECTED_URLS)
 
 def get_next_playlist_to_process(playlist_queue_path: str) -> tuple[str, str] | None:
     """Gets the next row in the playlist queue to process. Returns None if there are no more playlists to process, and return the playlist id and genre if all goes well."""
@@ -269,10 +275,9 @@ def main(playlist_queue_path: str, root_dir: str):
 
     clean_playlist_queue(playlist_queue_path)
 
-    ds = SongDataset(root_dir)
+    ds = SongDataset(root_dir, load_on_the_fly=True)
     urls: list[YouTubeURL] = []
 
-    # Phase 1: Calculate the playlist urls
     while True:
         next_playlist = get_next_playlist_to_process(playlist_queue_path)
         if not next_playlist:
@@ -299,5 +304,5 @@ def main(playlist_queue_path: str, root_dir: str):
 if __name__ == "__main__":
     main(
         playlist_queue_path="./resources/playlist_queue.txt",
-        root_dir="D:/Repository/project-remucs/audio-infos-v3"
+        root_dir="D:/audio-dataset-v3"
     )
