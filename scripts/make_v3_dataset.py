@@ -45,7 +45,7 @@ from remucs.spectrogram import process_spectrogram_features
 
 LIST_SPLIT_SIZE = 300
 
-def download_audio(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], print_fn = print):
+def download_audio(ds: SongDataset, urls: list[YouTubeURL], print_fn = print):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
     def download_audio_single(url: YouTubeURL) -> Audio:
         audio = Audio.load(url)
@@ -53,21 +53,21 @@ def download_audio(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], pr
 
     # Downloads the things concurrently and yields them one by one
     with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = {executor.submit(download_audio_single, url): (url, genre) for (url, genre) in urls}
+        futures = {executor.submit(download_audio_single, url): url for url in urls}
         for future in as_completed(futures):
-            url, genre = futures[future]
+            url = futures[future]
             try:
                 audio = future.result()
                 if isinstance(audio, str):
                     ds.write_info(REJECTED_URLS, url, audio)
                     continue
                 print_fn(f"Downloaded audio: {url}")
-                yield audio, url, genre
+                yield audio, url
             except Exception as e:
                 ds.write_error(f"Failed to download audio: {url}", e)
                 continue
 
-def process_batch(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], *,
+def process_batch(ds: SongDataset, urls: list[YouTubeURL], *,
                   entry_encoder: DatasetEntryEncoder,
                   spec_processes: dict[YouTubeURL, Thread],
                   print_fn = print):
@@ -75,7 +75,7 @@ def process_batch(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], *,
     t = time.time()
     last_t = None
 
-    for i, (audio, url, genre) in tqdm(enumerate(audios), total=len(urls)):
+    for i, (audio, url) in tqdm(enumerate(audios), total=len(urls)):
         ds.write_info(PROCESSED_URLS, url)
         if audio is None:
             continue
@@ -98,7 +98,6 @@ def process_batch(ds: SongDataset, urls: list[tuple[YouTubeURL, SongGenre]], *,
             url=url,
             dataset=ds,
             audio=audio,
-            genre=genre,
         )
 
         entry_encoder.write_to_path(
@@ -136,7 +135,7 @@ def main(root_dir: str):
         candidates = ds.read_info(CANDIDATE_URLS)
         assert isinstance(candidates, dict)
         finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
-        candidates = {c: SongGenre.from_int(int(v)) for c, v in candidates.items() if c not in finished}
+        candidates = [c for c in candidates if c not in finished]
         return candidates
 
     candidate_urls = get_candidate_urls()
@@ -145,7 +144,7 @@ def main(root_dir: str):
 
     while True:
         # Get the dict with the first LIST_SPLIT_SIZE elements sorted by key
-        url_batch = sorted(candidate_urls.items(), key=lambda x: x[0])[:LIST_SPLIT_SIZE]
+        url_batch = sorted(candidate_urls, key=lambda x: x[0])[:LIST_SPLIT_SIZE]
         if not url_batch:
             break
         try:
@@ -160,4 +159,4 @@ def main(root_dir: str):
         process_bar.update(nbefore - nafter)
 
 if __name__ == "__main__":
-    main("D:/Repository/project-remucs/audio-infos-v3")
+    main("D:/audio-dataset-v3")
