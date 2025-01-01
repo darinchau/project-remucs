@@ -49,7 +49,7 @@ def main(path: str):
 
     if not os.path.exists(os.path.join(path, "filtered_ds")):
         ds = load_dataset("laion/LAION-DISCO-12M")
-        mapped_ds = ds["train"].map(get_views, num_proc=8)
+        mapped_ds = ds["train"].map(get_views, num_proc=8) #type: ignore
         filtered_ds = mapped_ds.filter(lambda x: x["views"] > 500000, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: x["isExplicit"] is False, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: x["duration"] < 600 and x["duration"] > 120, num_proc=8)
@@ -66,12 +66,12 @@ def main(path: str):
 
     for entry in tqdm(filtered_ds, total=len(filtered_ds), ncols=75):
         try:
-            url = get_url(entry["song_id"])
+            url = get_url(entry["song_id"]) #type: ignore
         except Exception as e:
             print(f"Cannot get url for {entry}")
             continue
         urls.append(url.video_id)
-        metadata = {k: entry[k] for k in keys_to_write}
+        metadata = {k: entry[k] for k in keys_to_write} #type: ignore
         metadatas[url.video_id] = metadata
 
     with open(song_ds.get_path("info"), "r") as f:

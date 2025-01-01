@@ -12,10 +12,15 @@ import json
 from torch import Tensor
 import librosa
 from functools import lru_cache
+from math import isclose
+import typing
+import random
+
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
 from AutoMasher.fyp.util import YouTubeURL
 from AutoMasher.fyp.audio.base import DemucsCollection
-from math import isclose
+from AutoMasher.fyp import SongDataset, YouTubeURL
+from .constants import TRAIN_SPLIT, VALIDATION_SPLIT, TEST_SPLIT
 from .constants import (
     TARGET_SR,
     TARGET_DURATION,
@@ -28,6 +33,7 @@ from .constants import (
 from .util import Result
 
 PartIDType = Literal["V", "D", "I", "B", "N"]
+
 class SpectrogramCollection:
     @staticmethod
     def get_spectrogram_id(part_id: PartIDType, bar_number: int, bar_start: float, bar_duration: float):
@@ -333,3 +339,82 @@ def process_spectrogram_features(audio: Audio,
         return Result.failure("No spectrograms returned")
 
     return Result.success(specs)
+
+def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
+    """Loads the available bars from a spectrogram data file"""
+    with zipfile.ZipFile(path, 'r') as zip_ref:
+        if 'format.txt' not in zip_ref.namelist():
+            return []
+        # Open format.txt within the zip
+        with zip_ref.open('format.txt') as file:
+            metadata = json.loads(file.read().decode("utf-8"))
+
+        bars: list[tuple[PartIDType, int]] = []
+        for fn in zip_ref.namelist():
+            if fn == "format.txt":
+                continue
+            part_id, bar_number, bar_start, bar_duration = SpectrogramCollection.parse_spectrogram_id(fn[:-len(metadata["format"]) - 1])
+            bars.append((part_id, bar_number))
+    return bars
+
+def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int = 4) -> list[int]:
+    valids: list[int] = []
+    largest = max([x for _, x in spectrograms])
+    for i in range(largest):
+        keys_check = [(part_id, x) for x in range(i, i + nbars) for part_id in "NVDIB"]
+        if all([key in spectrograms for key in keys_check]):
+            valids.append(i)
+    return valids
+
+def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str) -> torch.Tensor:
+    """Processes the spectrogram data from a SpectrogramCollection object into a training object"""
+    tensors = []
+    for part in "VDIB":
+        # Spectrogram is in CHW format
+        # Where H is the time axis. Need concat along time
+        assert part in ("V", "D", "I", "B") # To pass the typechecker
+        specs = [s.get_spectrogram(part, i) for i in range(bar, bar + nbars)]
+        if not all(spec is not None for spec in specs):
+            raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
+        if not all(spec.shape == (2, 128, 512) for spec in specs): # type: ignore
+            raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
+        data = torch.cat(specs, dim=1) # type: ignore
+        tensors.append(data)
+    data = torch.stack(tensors)
+    # Return shape: 4, 2, H, W (should be 512, 512)
+    return data
+
+def get_random_spectrogram_data(
+    dataset: SongDataset,
+    batch_size: int | None = None,
+    nbars: int = 4,
+    split: typing.Literal["train", "test", "val"] = "train",
+):
+    dataset.register("spectrograms", "{video_id}.spec.zip")
+    split_ = TRAIN_SPLIT if split == "train" else VALIDATION_SPLIT if split == "val" else TEST_SPLIT
+    urls = dataset.read_info_urls(split_)
+    chosen = set()
+    invalid_urls: set[YouTubeURL] = set()
+    tensors = []
+    batch_size_ = batch_size if batch_size is not None else 1
+    while len(tensors) < batch_size_:
+        url = random.choice(list(urls - invalid_urls))
+        spec_path = dataset.get_path("spectrograms", url)
+        if not os.path.exists(spec_path):
+            invalid_urls.add(url)
+            continue
+        specs = load_spec_bars(spec_path)
+        valid_bars = get_valid_bar_numbers(specs, nbars)
+        if not valid_bars:
+            invalid_urls.add(url)
+            continue
+        bar = random.choice(valid_bars)
+        if (url, bar) in chosen:
+            continue
+        chosen.add((url, bar))
+        s = SpectrogramCollection.load(spec_path)
+        t = process_spectrogram(s, bar, nbars, spec_path)
+        if batch_size is None:
+            return t
+        tensors.append(t)
+    return torch.stack(tensors)

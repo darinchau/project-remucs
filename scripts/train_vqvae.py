@@ -19,7 +19,7 @@ from accelerate import Accelerator
 from remucs.model.vae import VQVAE, VQVAEConfig
 from remucs.model.vae import SpectrogramPatchModel as Discriminator
 from remucs.model.lpips import load_lpips
-from remucs.dataset import get_random_spectrogram_data
+from remucs.spectrogram import get_random_spectrogram_data
 import torch.nn.functional as F
 
 from AutoMasher.fyp import SongDataset
