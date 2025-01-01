@@ -47,16 +47,19 @@ def main(path: str):
     song_ds = SongDataset(path)
     song_ds.register("metadata", "metadata.json", initial_data="{}")
 
-    ds = load_dataset("laion/LAION-DISCO-12M")
-    mapped_ds = ds["train"].map(get_views, num_proc=8)
-    filtered_ds = mapped_ds.filter(lambda x: x["views"] > 500000, num_proc=8)
-    filtered_ds = filtered_ds.filter(lambda x: x["isExplicit"] is False, num_proc=8)
-    filtered_ds = filtered_ds.filter(lambda x: x["duration"] < 600 and x["duration"] > 120, num_proc=8)
-    filtered_ds = filtered_ds.filter(lambda x: len(x["artist_ids"]) > 0, num_proc=8)
-    filtered_ds = filtered_ds.filter(lambda x: detect_language(x))
-    filtered_ds = filtered_ds.remove_columns(["isExplicit"])
+    if not os.path.exists(os.path.join(path, "filtered_ds")):
+        ds = load_dataset("laion/LAION-DISCO-12M")
+        mapped_ds = ds["train"].map(get_views, num_proc=8)
+        filtered_ds = mapped_ds.filter(lambda x: x["views"] > 500000, num_proc=8)
+        filtered_ds = filtered_ds.filter(lambda x: x["isExplicit"] is False, num_proc=8)
+        filtered_ds = filtered_ds.filter(lambda x: x["duration"] < 600 and x["duration"] > 120, num_proc=8)
+        filtered_ds = filtered_ds.filter(lambda x: len(x["artist_ids"]) > 0, num_proc=8)
+        filtered_ds = filtered_ds.filter(lambda x: detect_language(x))
+        filtered_ds = filtered_ds.remove_columns(["isExplicit"])
 
-    filtered_ds.save_to_disk(os.path.join(path, "filtered_ds"))
+        filtered_ds.save_to_disk(os.path.join(path, "filtered_ds"))
+    else:
+        filtered_ds = load_from_disk(os.path.join(path, "filtered_ds"))
 
     urls = []
     metadatas = {}
@@ -67,7 +70,7 @@ def main(path: str):
         except Exception as e:
             print(f"Cannot get url for {entry}")
             continue
-        urls.append(url)
+        urls.append(url.video_id)
         metadata = {k: entry[k] for k in keys_to_write}
         metadatas[url.video_id] = metadata
 

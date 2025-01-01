@@ -25,9 +25,10 @@ except ImportError:
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
-from AutoMasher.fyp.audio.dataset import DatasetEntry, SongGenre, SongDataset, create_entry, DatasetEntryEncoder
+from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
 from AutoMasher.fyp import Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
+from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
 from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
@@ -45,11 +46,10 @@ from remucs.spectrogram import process_spectrogram_features
 
 LIST_SPLIT_SIZE = 300
 
-def download_audio(ds: SongDataset, urls: list[YouTubeURL], print_fn = print):
+def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
     """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
     def download_audio_single(url: YouTubeURL) -> Audio:
-        audio = Audio.load(url)
-        return audio
+        return Audio.load(url)
 
     # Downloads the things concurrently and yields them one by one
     with ThreadPoolExecutor(max_workers=4) as executor:
@@ -58,69 +58,63 @@ def download_audio(ds: SongDataset, urls: list[YouTubeURL], print_fn = print):
             url = futures[future]
             try:
                 audio = future.result()
-                if isinstance(audio, str):
-                    ds.write_info(REJECTED_URLS, url, audio)
-                    continue
-                print_fn(f"Downloaded audio: {url}")
+                tqdm.write(f"Downloaded audio: {url}")
                 yield audio, url
             except Exception as e:
-                ds.write_error(f"Failed to download audio: {url}", e)
+                ds.write_error(f"Failed to download audio: {url}", e, print_fn=tqdm.write)
                 continue
 
 def process_batch(ds: SongDataset, urls: list[YouTubeURL], *,
                   entry_encoder: DatasetEntryEncoder,
-                  spec_processes: dict[YouTubeURL, Thread],
-                  print_fn = print):
-    audios = download_audio(ds, urls, print_fn)
+                  spec_processes: dict[YouTubeURL, Thread]):
+    audios = download_audio(ds, urls)
     t = time.time()
     last_t = None
 
     for i, (audio, url) in tqdm(enumerate(audios), total=len(urls)):
-        ds.write_info(PROCESSED_URLS, url)
         if audio is None:
             continue
 
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
         last_t = time.time()
-        print_fn("")
-        print_fn("\u2500" * os.get_terminal_size().columns)
-        print_fn(f"Current time: {datetime.datetime.now()}")
-        print_fn("Recalculating entries")
-        print_fn(f"Last entry process time: {last_entry_process_time} seconds")
-        print_fn(f"Current entry: {url}")
-        print_fn(f"Time elapsed: {round(time.time() - t, 2)} seconds")
-        print_fn("\u2500" * os.get_terminal_size().columns)
-        print_fn("")
+        tqdm.write("")
+        tqdm.write("\u2500" * os.get_terminal_size().columns)
+        tqdm.write(f"Current time: {datetime.datetime.now()}")
+        tqdm.write("Recalculating entries")
+        tqdm.write(f"Last entry process time: {last_entry_process_time} seconds")
+        tqdm.write(f"Current entry: {url}")
+        tqdm.write(f"Time elapsed: {round(time.time() - t, 2)} seconds")
+        tqdm.write("\u2500" * os.get_terminal_size().columns)
+        tqdm.write("")
 
         clear_cuda()
 
-        dataset_entry = create_entry(
-            url=url,
-            dataset=ds,
-            audio=audio,
-        )
+        try:
+            dataset_entry = create_entry(
+                url=url,
+                dataset=ds,
+                audio=audio,
+                chord_model_path=CHORD_MODEL_PATH,
+                beat_model_path=BEAT_MODEL_PATH,
+                beat_backend="spleeter",
+                beat_backend_url="http://localhost:8123",
+                use_beat_cache=False,
+                use_chord_cache=False,
+            )
+        except Exception as e:
+            ds.write_error(f"Failed to create entry: {url}", e, print_fn=tqdm.write)
+            ds.write_info(REJECTED_URLS, url)
+            tqdm.write(f"Failed to create entry: {url}")
+            continue
+
+        tqdm.write(f"Writing entry to {ds.get_path('datafiles', url)}")
 
         entry_encoder.write_to_path(
             dataset_entry,
             ds.get_path("datafiles", url)
         )
-
-        spec_save_path = ds.get_path("spectrograms", url)
-        parts = ds.get_parts(url)
-        bt = BeatAnalysisResult(dataset_entry.beats, dataset_entry.downbeats)
-        thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, bt, spec_save_path))
-        thread.start()
-        spec_processes[url] = thread
-
-        # Clean up threads
-        for url, thread in list(spec_processes.items()):
-            if not thread.is_alive():
-                thread.join()
-                del spec_processes[url]
-                print_fn(f"{url} has finished processing")
-
-        print_fn(f"{len(spec_processes)} threads remaining")
-        print_fn(f"Waiting for the next entry...")
+        ds.write_info(PROCESSED_URLS, url)
+        tqdm.write(f"Waiting for the next entry...")
 
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
@@ -133,7 +127,7 @@ def main(root_dir: str):
 
     def get_candidate_urls():
         candidates = ds.read_info(CANDIDATE_URLS)
-        assert isinstance(candidates, dict)
+        assert candidates is not None
         finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
         candidates = [c for c in candidates if c not in finished]
         return candidates
