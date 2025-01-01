@@ -323,7 +323,7 @@ def process_spectrogram_features(audio: Audio,
 
         for aud, part_id in zip((audio, parts.vocals, parts.drums, parts.other, parts.bass),
                                 ("N", "V", "D", "I", "B")):
-            bar = aud.slice_seconds(bar_start, bar_end).change_speed(TARGET_DURATION/bar_duration)
+            bar = aud.slice_seconds(bar_start, bar_end).change_speed(bar_duration/TARGET_DURATION)
 
             # Pad the audio to exactly the target nframes for good measures
             bar = bar.pad(TARGET_NFRAMES, front = False)
@@ -366,8 +366,9 @@ def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int
             valids.append(i)
     return valids
 
-def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str) -> torch.Tensor:
-    """Processes the spectrogram data from a SpectrogramCollection object into a training object"""
+def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str | None = None) -> torch.Tensor:
+    """Processes the spectrogram data from a SpectrogramCollection object into a training object
+    path is only used for error messages"""
     tensors = []
     for part in "VDIB":
         # Spectrogram is in CHW format
@@ -383,6 +384,40 @@ def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: st
     data = torch.stack(tensors)
     # Return shape: 4, 2, H, W (should be 512, 512)
     return data
+
+def features_to_audio(images: Tensor):
+    assert images.shape in (
+        (4, 2, 512, 512),
+        (4, 512, 512),
+    ), f"Invalid shape {images.shape}"
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=TARGET_FEATURES,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format="png",
+    )
+
+    # Image shape is (4, 512, 512)
+    parts = {}
+    for im, part in zip(images, "VDIB"):
+        if images.shape == (4, 512, 512):
+            im = im[None]
+        audio = specs.spectrogram_to_audio(im)
+        audio = audio.change_speed(audio.duration/8)
+
+        parts[part] = audio
+
+    return DemucsCollection(
+        vocals=parts["V"],
+        drums=parts["D"],
+        other=parts["I"],
+        bass=parts["B"],
+    )
 
 def get_random_spectrogram_data(
     dataset: SongDataset,
