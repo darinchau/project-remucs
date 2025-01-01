@@ -2,7 +2,6 @@
 
 import os
 import torch
-from .spectrogram import SpectrogramCollection, PartIDType
 import json
 from torch.utils.data import Dataset
 from p_tqdm import p_umap
@@ -10,18 +9,15 @@ import zipfile
 from tqdm.auto import tqdm, trange
 import tempfile
 import shutil
+import typing
 import random
 
+from AutoMasher.fyp import SongDataset, YouTubeURL
+from .spectrogram import SpectrogramCollection, PartIDType
+from .constants import TRAIN_SPLIT, VALIDATION_SPLIT, TEST_SPLIT
+
 class SpectrogramDataset(Dataset):
-    """Dataset class for loading spectrograms from .spec files.
-    The dataset is created from dataset_dir which should be a folder containing .spec files.
-
-    The metadata inside the .spec files is used to determine the number of bars in the file.
-    It is read in parallel unless num_workers is set to 0.
-
-    load_first_n can be set to load only n files. If set to -1, all files are loaded.
-
-    This implicitly assumes (512, 512) resolution and VDIB parts."""
+    """Deprecated"""
     def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1, lookup_table_path: str | None = None):
         def load(path: str, bars: list[tuple[PartIDType, int]] | None = None):
             # Reading the whole thing is slow D: so let's only read the metadata
@@ -70,13 +66,7 @@ class SpectrogramDataset(Dataset):
         return process_spectrogram(s, bar, self.nbars, path)
 
 class SpectrogramDatasetFromCloud(Dataset):
-    """Spectrogram Dataset but instead we load from a Google Cloud Storage bucket.
-    Several key differences:
-    - We rely completely on the lookup table during initialization
-    - Default objects are present in case of error. This is done using the test specs
-    - default_specs_dir is the directory containing the default spectrograms
-    - Implements a LRU cache to store the spectrograms in memory
-    """
+    """Deprecated"""
     def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset,
                  credentials_path: str, bucket_name: str, cache_dir: str, nbars: int = 4, size_limit_mb: int = 16384,
                  load_first_n_dataset: int = -1):
@@ -236,6 +226,7 @@ def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
     and local_dataset_dir functions as the default spectrogram directory.
     Otherwise, loads from the local directory.
     """
+    raise NotImplementedError("This function is deprecated for now")
     if credentials_path is not None and bucket_name is not None:
         if cache_dir is None:
             cache_dir = tempfile.mkdtemp()
@@ -256,3 +247,38 @@ def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
         load_first_n=-1,
         lookup_table_path=lookup_table_path
     )
+
+def get_random_spectrogram_data(
+    dataset: SongDataset,
+    batch_size: int | None = None,
+    nbars: int = 4,
+    split: typing.Literal["train", "test", "val"] = "train",
+):
+    dataset.register("spectrograms", "{video_id}.spec.zip")
+    split_ = TRAIN_SPLIT if split == "train" else VALIDATION_SPLIT if split == "val" else TEST_SPLIT
+    urls = dataset.read_info_urls(split_)
+    chosen = set()
+    invalid_urls: set[YouTubeURL] = set()
+    tensors = []
+    batch_size_ = batch_size if batch_size is not None else 1
+    while len(tensors) < batch_size_:
+        url = random.choice(list(urls - invalid_urls))
+        spec_path = dataset.get_path("spectrograms", url)
+        if not os.path.exists(spec_path):
+            invalid_urls.add(url)
+            continue
+        specs = load_spec_bars(spec_path)
+        valid_bars = get_valid_bar_numbers(specs, nbars)
+        if not valid_bars:
+            invalid_urls.add(url)
+            continue
+        bar = random.choice(valid_bars)
+        if (url, bar) in chosen:
+            continue
+        chosen.add((url, bar))
+        s = SpectrogramCollection.load(spec_path)
+        t = process_spectrogram(s, bar, nbars, spec_path)
+        if batch_size is None:
+            return t
+        tensors.append(t)
+    return torch.stack(tensors)

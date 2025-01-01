@@ -268,7 +268,6 @@ class SpectrogramCollection:
         return Audio(torch.from_numpy(data_np), self.sample_rate)
 
 def process_spectrogram_features(audio: Audio,
-                                 url: YouTubeURL,
                                  parts: DemucsCollection,
                                  br: BeatAnalysisResult, save_path: str | None = None, format: str = "png") -> Result[SpectrogramCollection]:
     """Processes the spectrogram features of the audio and saves it to the save path.
