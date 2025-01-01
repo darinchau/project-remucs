@@ -16,14 +16,14 @@ from torch.amp.grad_scaler import GradScaler
 import wandb
 import pickle
 from accelerate import Accelerator
+from remucs.spectrogram import get_random_spectrogram_data
 from remucs.model.vae import VQVAE, VQVAEConfig, vae_output_to_audio, gla_loss
 from remucs.model.lpips import load_lpips
-from remucs.dataset import load_dataset
-from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 import torch.nn.functional as F
 
+from AutoMasher.fyp import SongDataset
+
 from remucs.constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
-from remucs.spectrogram import SpectrogramCollection
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -43,8 +43,8 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
-def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
-             model_path: str, reconstructions: int = 3, batch_size: int = 32, first_n: int = 3,
+def evaluate(config_path: str, dataset_dir: str, model_path: str,
+             reconstructions: int = 3, batch_size: int = 32, first_n: int = 3,
              compute_griffin_lim: bool = False, return_specs: bool = False):
     """Tests the VQVAE model on the test dataset
 
@@ -58,6 +58,9 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
         first_n (int, optional): Number of batches to evaluate. Set to -1 to evaluate all. Defaults to 3.
         compute_griffin_lim (bool, optional): Whether to compute the Griffin-Lim loss. Defaults to False.
         return_specs (bool, optional): Whether to return the spectrograms. Defaults to False."""
+    if first_n <= 0:
+        raise ValueError("first_n must be greater than 0, got ", first_n)
+
     config = read_config(config_path)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
@@ -70,21 +73,7 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
     model.eval()
 
-    im_dataset = load_dataset(
-        lookup_table_path=lookup_table_path,
-        local_dataset_dir=dataset_dir,
-        credentials_path=dataset_config['credentials_path'],
-        bucket_name=dataset_config['bucket_name'],
-        cache_dir=dataset_config['cache_dir'],
-        backup_dataset_first_n=1
-    )
-
-    print('Dataset size: {}'.format(len(im_dataset)))
-
-    data_loader = DataLoader(im_dataset,
-                             batch_size=batch_size,
-                             num_workers=train_config['num_workers_dl'],
-                             shuffle=False)
+    sd = SongDataset(dataset_dir)
 
     # Create output directories
     reconstruction_loss = torch.nn.MSELoss()
@@ -105,16 +94,12 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
     losses = {}
     returns = {}
 
-    if first_n < 0:
-        first_n = len(data_loader)
-        reconstruction_idxs = random.sample(range(len(im_dataset)), k=reconstructions)
-    else:
-        reconstruction_idxs = random.sample(range(batch_size * first_n), k=reconstructions)
-
+    reconstruction_idxs = random.sample(range(batch_size * first_n), k=reconstructions)
     print("Reconstructing: ", reconstruction_idxs)
 
     with torch.no_grad():
-        for i, im in tqdm(enumerate(data_loader), total=first_n):
+        for i in range(first_n):
+            im = get_random_spectrogram_data(sd, batch_size=batch_size, split="test")
             im = im.float().to(device)
             im = im.mean(dim=2)
 
@@ -130,8 +115,6 @@ def evaluate(config_path: str, dataset_dir: str, lookup_table_path: str,
             codebook_losses.append(quantize_losses['codebook_loss'].item())
 
             losses[i] = {
-                'path': im_dataset.path_bar[i][0],
-                'bar': im_dataset.path_bar[i][1],
                 'Reconstruction Loss': recon_loss.item(),
                 'Perceptual Loss': lpips_loss.item(),
                 'Codebook Loss': quantize_losses['codebook_loss'].item(),

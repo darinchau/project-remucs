@@ -6,7 +6,7 @@ from torch import nn, Tensor
 from dataclasses import dataclass
 from torch.utils.checkpoint import checkpoint
 import torch.nn.functional as F
-from ..spectrogram import SpectrogramCollection
+from ..spectrogram import audio_to_spectrogram
 from ..constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 
