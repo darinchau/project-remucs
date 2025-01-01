@@ -269,7 +269,10 @@ class SpectrogramCollection:
 
 def process_spectrogram_features(audio: Audio,
                                  parts: DemucsCollection,
-                                 br: BeatAnalysisResult, save_path: str | None = None, format: str = "png") -> Result[SpectrogramCollection]:
+                                 br: BeatAnalysisResult,
+                                 save_path: str | None = None,
+                                 format: str = "png",
+                                 noreturn: bool = True,) -> Result[SpectrogramCollection]:
     """Processes the spectrogram features of the audio and saves it to the save path.
     If save_path is None, the spectrogram will not be saved to disk."""
     # Sanity check
@@ -322,5 +325,11 @@ def process_spectrogram_features(audio: Audio,
 
     if len(specs.spectrograms) > 0 and save_path is not None:
         specs.save(save_path)
+
+    if len(specs.spectrograms) == 0:
+        return Result.failure("No spectrograms generated")
+
+    if noreturn:
+        return Result.failure("No spectrograms returned")
 
     return Result.success(specs)

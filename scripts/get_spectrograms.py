@@ -107,7 +107,7 @@ def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], demucs: DemucsAu
             print("Processing spectrogram features...")
             path = ds.get_path("spectrograms", url)
 
-            thread = Thread(target=process_spectrogram_features, args=(audio, url, parts, br, path))
+            thread = Thread(target=process_spectrogram_features, args=(audio, parts, br, path))
             thread.start()
             threads[url] = thread
 
