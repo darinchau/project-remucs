@@ -33,7 +33,6 @@ from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import randn_tensor
 
-from remucs.dataset import SpectrogramDataset, SpectrogramDatasetFromCloud
 from remucs.model.vae import VQVAE, VQVAEConfig
 from remucs.model.unet import PromptEmbed
 

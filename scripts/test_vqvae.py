@@ -17,7 +17,8 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.spectrogram import get_random_spectrogram_data
-from remucs.model.vae import VQVAE, VQVAEConfig, vae_output_to_audio, gla_loss
+from remucs.model.vae import VQVAE, VQVAEConfig, gla_loss
+from remucs.spectrogram import features_to_audio as vae_output_to_audio
 from remucs.model.lpips import load_lpips
 import torch.nn.functional as F
 
