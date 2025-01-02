@@ -109,11 +109,17 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *,
 
         tqdm.write(f"Writing entry to {ds.get_path('datafiles', url)}")
 
-        entry_encoder.write_to_path(
-            dataset_entry,
-            ds.get_path("datafiles", url)
-        )
-        ds.write_info(PROCESSED_URLS, url)
+        try:
+            entry_encoder.write_to_path(
+                dataset_entry,
+                ds.get_path("datafiles", url)
+            )
+            ds.write_info(PROCESSED_URLS, url)
+        except Exception as e:
+            ds.write_error(f"Failed to write entry: {url}", e, print_fn=tqdm.write)
+            ds.write_info(REJECTED_URLS, url)
+            tqdm.write(f"Failed to write entry: {url}")
+            continue
         tqdm.write(f"Waiting for the next entry...")
 
 def main(root_dir: str):
