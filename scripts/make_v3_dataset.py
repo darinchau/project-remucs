@@ -44,13 +44,25 @@ from remucs.constants import (
 from remucs.spectrogram import process_spectrogram_features
 
 LIST_SPLIT_SIZE = 300
+MAX_ERRORS = 10
+MAX_ERRORS_TIME = 15
+RANDOM_WAIT_TIME_MIN = 15
+RANDOM_WAIT_TIME_MAX = 60
+
+class ProbablyBlacklisted(Exception):
+    pass
 
 def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
-    """Downloads the audio from the URLs. Yields the audio and the URL. Yield None if the download fails."""
+    """Downloads the audio from the URLs. Yields the audio and the URL."""
     def download_audio_single(url: YouTubeURL) -> Audio:
-        return Audio.load(url)
+        # Wait for a random amount of time to avoid getting blacklisted
+        audio = Audio.load(url)
+        time.sleep(random.uniform(RANDOM_WAIT_TIME_MIN, RANDOM_WAIT_TIME_MAX))
+        return audio
 
     # Downloads the things concurrently and yields them one by one
+    # If more than MAX_ERRORS fails in MAX_ERRORS_TIME seconds, then we assume YT has blacklisted our IP or our internet is down or smth and we stop
+    error_logs = []
     with ThreadPoolExecutor(max_workers=4) as executor:
         futures = {executor.submit(download_audio_single, url): url for url in urls}
         for future in as_completed(futures):
@@ -60,12 +72,24 @@ def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
                 tqdm.write(f"Downloaded audio: {url}")
                 yield audio, url
             except Exception as e:
+                if "This video is not available" in str(e):
+                    ds.write_info(REJECTED_URLS, url)
+                    tqdm.write(f"Rejected URL: {url} (This video is not available.)")
+                    continue
                 ds.write_error(f"Failed to download audio: {url}", e, print_fn=tqdm.write)
-                continue
+                error_logs.append((time.time(), e))
+                if len(error_logs) >= MAX_ERRORS:
+                    if time.time() - error_logs[0][0] < MAX_ERRORS_TIME:
+                        tqdm.write(f"Too many errors in a short time, has YouTube blacklisted us?")
+                        for t, e in error_logs:
+                            tqdm.write(f"Error ({t}): {e}")
+                        # Stop all the other downloads
+                        for future in futures:
+                            future.cancel()
+                        raise ProbablyBlacklisted(f"Too many errors in a short time, has YouTube blacklisted us?")
+                    error_logs.pop(0)
 
-def process_batch(ds: SongDataset, urls: list[YouTubeURL], *,
-                  entry_encoder: DatasetEntryEncoder,
-                  spec_processes: dict[YouTubeURL, Thread]):
+def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: DatasetEntryEncoder):
     audios = download_audio(ds, urls)
     t = time.time()
     last_t = None
@@ -87,6 +111,9 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *,
         tqdm.write("")
 
         clear_cuda()
+
+        audio_path = ds.get_path("audio", url)
+        audio.save(audio_path)
 
         try:
             dataset_entry = create_entry(
@@ -128,7 +155,6 @@ def main(root_dir: str):
     ds.register("spectrograms", "{video_id}.spec.zip")
 
     entry_encoder = DatasetEntryEncoder()
-    spec_processes = {}
 
     def get_candidate_urls():
         candidates = ds.read_info(CANDIDATE_URLS)
@@ -147,7 +173,11 @@ def main(root_dir: str):
         if not url_batch:
             break
         try:
-            process_batch(ds, url_batch, entry_encoder=entry_encoder, spec_processes=spec_processes)
+            process_batch(ds, url_batch, entry_encoder=entry_encoder)
+        except ProbablyBlacklisted as e:
+            ds.write_error("Failed to process batch", e)
+            print("Probably blacklisted, stopping")
+            break
         except Exception as e:
             ds.write_error("Failed to process batch", e)
             traceback.print_exc()
