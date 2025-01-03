@@ -152,6 +152,7 @@ def main(path: str):
     # Get all urls
     urls: list[YouTubeURL] = []
     ds = SongDataset(path, max_dir_size=None, load_on_the_fly=True)
+    ds.register("spectrograms", "{video_id}.spec.zip")
     candidate_urls = ds.read_info_urls(CANDIDATE_URLS)
     finished_urls = ds.read_info_urls(REJECTED_SPECTROGRAMS_URLS) | ds.read_info_urls(TRAIN_SPLIT) | ds.read_info_urls(VALIDATION_SPLIT) | ds.read_info_urls(TEST_SPLIT)
     urls = [url for url in candidate_urls if url not in finished_urls]
