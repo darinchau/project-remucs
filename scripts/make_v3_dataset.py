@@ -28,7 +28,6 @@ except ImportError:
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
 from AutoMasher.fyp import Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
-from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
 from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
@@ -159,4 +158,9 @@ def main(root_dir: str):
         process_bar.update(nbefore - nafter)
 
 if __name__ == "__main__":
-    main("D:/audio-dataset-v3")
+    import sys
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <root_dir>")
+        sys.exit(1)
+    root_dir = sys.argv[1]
+    main(root_dir)

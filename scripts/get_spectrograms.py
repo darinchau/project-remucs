@@ -9,7 +9,7 @@ from math import isclose
 from threading import Thread
 import tempfile
 
-from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
+from AutoMasher.fyp.audio.separation import demucs_separate
 from AutoMasher.fyp import SongDataset
 from AutoMasher.fyp.audio.dataset.base import verify_beats_result, verify_parts_result
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, analyse_beat_transformer
@@ -55,7 +55,7 @@ def cleanup_temp_dir():
                 except Exception as e:
                     print(f"Failed to delete file: {file_path}")
 
-def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], demucs: DemucsAudioSeparator, threads: dict[YouTubeURL, Thread], description: str = ""):
+def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], threads: dict[YouTubeURL, Thread], description: str = ""):
     """Main function to calculate the features of a list of URLs with a common genre."""
     t = time.time()
     last_t = None
@@ -85,7 +85,7 @@ def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], demucs: DemucsAu
 
         try:
             print("Separating audio...")
-            parts = demucs.separate(audio)
+            parts = demucs_separate(audio)
             error = verify_parts_result(parts, mean_vocal_threshold=0.1)
             if error:
                 ds.write_info(REJECTED_SPECTROGRAMS_URLS, url)
@@ -151,18 +151,17 @@ def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], demucs: DemucsAu
 def main(path: str):
     # Get all urls
     urls: list[YouTubeURL] = []
-    ds = SongDataset(path, max_dir_size=None)
+    ds = SongDataset(path, max_dir_size=None, load_on_the_fly=True)
     candidate_urls = ds.read_info_urls(CANDIDATE_URLS)
     finished_urls = ds.read_info_urls(REJECTED_SPECTROGRAMS_URLS) | ds.read_info_urls(TRAIN_SPLIT) | ds.read_info_urls(VALIDATION_SPLIT) | ds.read_info_urls(TEST_SPLIT)
     urls = [url for url in candidate_urls if url not in finished_urls]
     print(f"Number of URLs: {len(urls)}")
 
     # Start calculating
-    demucs = DemucsAudioSeparator(compile=False)
     threads = {}
     while urls:
         try:
-            calculate_url_list(ds, urls[:BATCH_SIZE], demucs, threads, "Calculating spectrogram features")
+            calculate_url_list(ds, urls[:BATCH_SIZE], threads, "Calculating spectrogram features")
             urls = urls[BATCH_SIZE:]
         except Exception as e:
             ds.write_error("Failed to process batch", e)
@@ -171,4 +170,9 @@ def main(path: str):
     print("All URLs processed")
 
 if __name__ == "__main__":
-    main("D:/audio-dataset-v3")
+    import sys
+    if len(sys.argv) != 2:
+        print(f"Usage: {sys.argv[0]} <root_dir>")
+        sys.exit(1)
+    root_dir = sys.argv[1]
+    main(root_dir)
