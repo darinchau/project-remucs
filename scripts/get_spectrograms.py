@@ -59,13 +59,15 @@ def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], threads: dict[Yo
     """Main function to calculate the features of a list of URLs with a common genre."""
     t = time.time()
     last_t = None
-    audios = download_audio(ds, urls)
     clear_output()
 
     linesep = "\u2500"
 
-    for i, (audio, url) in enumerate(audios):
-        if not audio:
+    for i, url in enumerate(urls):
+        try:
+            audio = ds.get_audio(url)
+        except Exception as e:
+            ds.write_error(f"Failed to download audio: {url}", e)
             continue
 
         last_entry_process_time = round(time.time() - last_t, 2) if last_t else None
@@ -100,7 +102,7 @@ def calculate_url_list(ds: SongDataset, urls: list[YouTubeURL], threads: dict[Yo
             )
             error = verify_beats_result(br, audio.duration, url, reject_weird_meter=False)
             if error:
-                ds.write_info(REJECTED_SPECTROGRAMS_URLS, url, error)
+                ds.write_info(REJECTED_SPECTROGRAMS_URLS, url)
                 continue
 
             # Save the spectrogram features
@@ -153,7 +155,7 @@ def main(path: str):
     urls: list[YouTubeURL] = []
     ds = SongDataset(path, max_dir_size=None, load_on_the_fly=True)
     ds.register("spectrograms", "{video_id}.spec.zip")
-    candidate_urls = ds.read_info_urls(CANDIDATE_URLS)
+    candidate_urls = ds.list_urls("audio")
     finished_urls = ds.read_info_urls(REJECTED_SPECTROGRAMS_URLS) | ds.read_info_urls(TRAIN_SPLIT) | ds.read_info_urls(VALIDATION_SPLIT) | ds.read_info_urls(TEST_SPLIT)
     urls = [url for url in candidate_urls if url not in finished_urls]
     print(f"Number of URLs: {len(urls)}")
