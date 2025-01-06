@@ -33,6 +33,8 @@ from AutoMasher.fyp.util import (
     YouTubeURL,
 )
 
+import json
+
 from remucs.constants import (
     BEAT_MODEL_PATH,
     CHORD_MODEL_PATH,
@@ -160,7 +162,10 @@ def main(root_dir: str):
         candidates = ds.read_info(CANDIDATE_URLS)
         assert candidates is not None
         finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
-        candidates = [c for c in candidates if c not in finished]
+        metadata = ds.get_path("metadata")
+        with open(metadata, "r") as f:
+            metadatas = json.load(f)
+        candidates = sorted((c for c in candidates if c not in finished), key=lambda x: metadatas[x.video_id]["views"], reverse=True)
         return candidates
 
     candidate_urls = get_candidate_urls()
