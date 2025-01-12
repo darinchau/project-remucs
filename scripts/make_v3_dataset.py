@@ -27,7 +27,7 @@ except ImportError:
 
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
 from AutoMasher.fyp import Audio
-from AutoMasher.fyp.audio.analysis import BeatAnalysisResult
+from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, DeadBeatKernel
 from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
@@ -130,6 +130,8 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: Dat
                 use_beat_cache=False,
                 use_chord_cache=False,
             )
+        except DeadBeatKernel as e:
+            raise ValueError(f"Beat kernel is unresponsive: {url}") from e
         except Exception as e:
             ds.write_error(f"Failed to create entry: {url}", e, print_fn=tqdm.write)
             ds.write_info(REJECTED_URLS, url)
