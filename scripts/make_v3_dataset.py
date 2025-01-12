@@ -32,7 +32,7 @@ from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
 )
-
+from itertools import zip_longest
 import json
 
 from remucs.constants import (
@@ -151,23 +151,52 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: Dat
             continue
         tqdm.write(f"Waiting for the next entry...")
 
+def get_candidate_urls(ds: SongDataset) -> list[YouTubeURL]:
+    candidates = ds.read_info(CANDIDATE_URLS)
+    assert candidates is not None
+    finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
+    metadata = ds.get_path("metadata")
+    with open(metadata, "r") as f:
+        metadatas = json.load(f)
+    candidates = [c for c in candidates if c not in finished]
+
+    # Sort by views, but intersperse them with language info
+    language: dict[str, list[YouTubeURL]] = {
+        "en": [],
+        "ja": [],
+        "ko": [],
+        "zh": [],
+    }
+    for c in candidates:
+        try:
+            lang = metadatas[c.video_id]["language"]
+            language[lang].append(c)
+        except KeyError:
+            continue
+
+    for lang in language:
+        language[lang].sort(key=lambda x: metadatas[x.video_id]["views"])
+
+    result: list[YouTubeURL] = []
+    for items in zip_longest(
+        language["en"],
+        language["ja"],
+        language["ko"],
+        language["zh"],
+        fillvalue=None
+    ):
+        # Filter out None values and extend the result list
+        result.extend(item for item in items if item is not None)
+
+    return result
+
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
     ds = SongDataset(root_dir, load_on_the_fly=True, max_dir_size=None)
     ds.register("spectrograms", "{video_id}.spec.zip")
     entry_encoder = DatasetEntryEncoder()
 
-    def get_candidate_urls():
-        candidates = ds.read_info(CANDIDATE_URLS)
-        assert candidates is not None
-        finished = ds.read_info_urls(PROCESSED_URLS) | ds.read_info_urls(REJECTED_URLS)
-        metadata = ds.get_path("metadata")
-        with open(metadata, "r") as f:
-            metadatas = json.load(f)
-        candidates = sorted((c for c in candidates if c not in finished), key=lambda x: metadatas[x.video_id]["views"], reverse=True)
-        return candidates
-
-    candidate_urls = get_candidate_urls()
+    candidate_urls = get_candidate_urls(ds)
     print(f"Loading dataset from {ds} ({len(candidate_urls)} candidate entries)")
     process_bar = tqdm(desc="Processing candidates", total=len(candidate_urls))
     n_videos_before_rest = REST_EVERY_N_VIDEOS
@@ -188,7 +217,7 @@ def main(root_dir: str):
             traceback.print_exc()
 
         nbefore = len(candidate_urls)
-        candidate_urls = get_candidate_urls()
+        candidate_urls = get_candidate_urls(ds)
         nafter = len(candidate_urls)
         process_bar.update(nbefore - nafter)
 
