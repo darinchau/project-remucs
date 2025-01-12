@@ -175,7 +175,7 @@ def get_candidate_urls(ds: SongDataset) -> list[YouTubeURL]:
             continue
 
     for lang in language:
-        language[lang].sort(key=lambda x: metadatas[x.video_id]["views"])
+        language[lang].sort(key=lambda x: metadatas[x.video_id]["views"], reverse=True)
 
     result: list[YouTubeURL] = []
     for items in zip_longest(

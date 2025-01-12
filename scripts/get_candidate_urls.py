@@ -34,14 +34,23 @@ def get_views(x):
 
 DetectorFactory.seed = 0
 
+mapping = {
+    "zh-cn": "zh",
+    "zh-tw": "zh",
+    "ko": "ko",
+    "ja": "ja",
+    "en": "en"
+}
+
 def detect_language(x):
     try:
         language = detect(x["title"])
-        return language in ["en", "zh-cn", "zh-tw", "ja", "ko"]
+        x["language"] = mapping.get(language, "other")
     except LangDetectException:
-        return False
+        x["language"] = "unk" # unknown
+    return x
 
-keys_to_write = ['title', 'artist_names', 'album_name', 'views']
+keys_to_write = ['title', 'artist_names', 'album_name', 'views', "language"]
 
 def main(path: str):
     song_ds = SongDataset(path)
@@ -50,11 +59,13 @@ def main(path: str):
     if not os.path.exists(os.path.join(path, "filtered_ds")):
         ds = load_dataset("laion/LAION-DISCO-12M")
         mapped_ds = ds["train"].map(get_views, num_proc=8) #type: ignore
+        # I can do this in one line in the typical flamboyant functional programming style but the error message will be bad
         filtered_ds = mapped_ds.filter(lambda x: x["views"] > 500000, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: x["isExplicit"] is False, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: x["duration"] < 600 and x["duration"] > 120, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: len(x["artist_ids"]) > 0, num_proc=8)
-        filtered_ds = filtered_ds.filter(lambda x: detect_language(x))
+        filtered_ds = filtered_ds.map(detect_language)
+        filtered_ds = filtered_ds.filter(lambda x: x["language"] in ["en", "ja", "ko", "zh"], num_proc=8)
         filtered_ds = filtered_ds.remove_columns(["isExplicit"])
 
         filtered_ds.save_to_disk(os.path.join(path, "filtered_ds"))
