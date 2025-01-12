@@ -50,6 +50,7 @@ MAX_ERRORS = 10
 MAX_ERRORS_TIME = 15
 RANDOM_WAIT_TIME_MIN = 15
 RANDOM_WAIT_TIME_MAX = 60
+REST_EVERY_N_VIDEOS = 1200
 
 class ProbablyBlacklisted(Exception):
     pass
@@ -153,9 +154,7 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: Dat
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
     ds = SongDataset(root_dir, load_on_the_fly=True, max_dir_size=None)
-
     ds.register("spectrograms", "{video_id}.spec.zip")
-
     entry_encoder = DatasetEntryEncoder()
 
     def get_candidate_urls():
@@ -171,6 +170,7 @@ def main(root_dir: str):
     candidate_urls = get_candidate_urls()
     print(f"Loading dataset from {ds} ({len(candidate_urls)} candidate entries)")
     process_bar = tqdm(desc="Processing candidates", total=len(candidate_urls))
+    n_videos_before_rest = REST_EVERY_N_VIDEOS
 
     while True:
         # Get the dict with the first LIST_SPLIT_SIZE elements sorted by key
@@ -191,6 +191,13 @@ def main(root_dir: str):
         candidate_urls = get_candidate_urls()
         nafter = len(candidate_urls)
         process_bar.update(nbefore - nafter)
+
+        n_videos_before_rest -= nbefore - nafter
+        if n_videos_before_rest <= 0:
+            print("Taking a rest")
+            for _ in trange(60 * 60 * 5, desc="Resting..."):
+                time.sleep(1)
+            n_videos_before_rest = REST_EVERY_N_VIDEOS
 
 if __name__ == "__main__":
     import sys
