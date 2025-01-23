@@ -52,7 +52,7 @@ RANDOM_WAIT_TIME_MIN = 15
 RANDOM_WAIT_TIME_MAX = 60
 REST_EVERY_N_VIDEOS = 1200
 
-class ProbablyBlacklisted(Exception):
+class FatalError(Exception):
     pass
 
 def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
@@ -93,7 +93,7 @@ def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
                         # Stop all the other downloads
                         for future in futures:
                             future.cancel()
-                        raise ProbablyBlacklisted(f"Too many errors in a short time, has YouTube blacklisted us?")
+                        raise FatalError(f"Too many errors in a short time, has YouTube blacklisted us?")
                     error_logs.pop(0)
 
 def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: DatasetEntryEncoder):
@@ -135,7 +135,7 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: Dat
                 use_chord_cache=False,
             )
         except DeadBeatKernel as e:
-            raise ValueError(f"Beat kernel is unresponsive: {url}") from e
+            raise FatalError(f"Beat kernel is unresponsive: {url}") from e
         except Exception as e:
             ds.write_error(f"Failed to create entry: {url}", e, print_fn=tqdm.write)
             ds.write_info(REJECTED_URLS, url)
@@ -214,9 +214,8 @@ def main(root_dir: str):
             break
         try:
             process_batch(ds, url_batch, entry_encoder=entry_encoder)
-        except ProbablyBlacklisted as e:
-            ds.write_error("Failed to process batch", e)
-            print("Probably blacklisted, stopping")
+        except FatalError as e:
+            print(e)
             break
         except Exception as e:
             ds.write_error("Failed to process batch", e)
