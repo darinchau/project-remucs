@@ -81,6 +81,7 @@ def main(path: str):
                 parts=parts,
                 backend="demucs",
                 use_cache=False,
+                model_path=BEAT_MODEL_PATH
             )
         except Exception as e:
             tqdm.write(f"Error analysing beats: {e}")
