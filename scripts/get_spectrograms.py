@@ -27,7 +27,7 @@ except ImportError:
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
 from AutoMasher.fyp import Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, DeadBeatKernel, analyse_beat_transformer
-from AutoMasher.fyp.audio.separation import demucs_separate
+from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
 from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
@@ -51,6 +51,8 @@ def main(path: str):
     song_ds.register("spectrograms", "{video_id}.spec.zip")
 
     audio_urls = song_ds.list_urls("audio")
+    demucs = DemucsAudioSeparator()
+
     for url in audio_urls:
         t = time.time()
         path = song_ds.get_path("audio", url)
@@ -65,7 +67,7 @@ def main(path: str):
 
         tqdm.write(f"Processing {url}")
         try:
-            parts = demucs_separate(audio, use_gpu=True)
+            parts = demucs.separate(audio)
         except Exception as e:
             tqdm.write(f"Error separating audio: {e}")
             continue
