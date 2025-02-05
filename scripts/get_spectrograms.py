@@ -93,7 +93,9 @@ def main(path: str):
         t.start()
         threads[url] = t
 
-        for url, t in threads.items():
+        keys = list(threads.keys())
+        for url in keys:
+            t = threads[url]
             if not t.is_alive():
                 t.join()
                 del threads[url]
