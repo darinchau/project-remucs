@@ -46,7 +46,7 @@ from remucs.constants import (
 from remucs.spectrogram import process_spectrogram_features, SpectrogramCollection
 
 def main(path: str):
-    song_ds = SongDataset(path)
+    song_ds = SongDataset(path, max_dir_size=None)
     threads: dict[YouTubeURL, Thread] = {}
     song_ds.register("spectrograms", "{video_id}.spec.zip")
 
@@ -54,6 +54,8 @@ def main(path: str):
     demucs = DemucsAudioSeparator()
 
     for url in audio_urls:
+        clear_cuda()
+
         t = time.time()
         path = song_ds.get_path("audio", url)
         if not os.path.exists(path):
