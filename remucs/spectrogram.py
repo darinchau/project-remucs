@@ -1,4 +1,9 @@
 from __future__ import annotations
+import shutil
+from tqdm.auto import tqdm, trange
+from p_tqdm import p_umap
+from torch.utils.data import Dataset
+from .spectrogram import SpectrogramCollection, PartIDType
 import numpy as np
 import base64
 from typing import Literal
@@ -32,7 +37,7 @@ from .constants import (
 )
 from .util import Result
 
-PartIDType = Literal["V", "D", "I", "B", "N"]
+PartIDType: typing.TypeAlias = Literal["V", "D", "I", "B", "N"]
 
 
 class SpectrogramCollection:
@@ -343,6 +348,184 @@ def process_spectrogram_features(audio: Audio,
     return Result.success(specs)
 
 
+# Creates a dataset class from torch dataset that loads the spectrograms from .spec files
+
+
+class SpectrogramDataset(Dataset):
+    """Dataset class for loading spectrograms from .spec files.
+    The dataset is created from dataset_dir which should be a folder containing .spec files.
+
+    The metadata inside the .spec files is used to determine the number of bars in the file.
+    It is read in parallel unless num_workers is set to 0.
+
+    load_first_n can be set to load only n files. If set to -1, all files are loaded.
+
+    This implicitly assumes (512, 512) resolution and VDIB parts."""
+
+    def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1, lookup_table_path: str | None = None):
+        def load(path: str, bars: list[tuple[PartIDType, int]] | None = None):
+            # Reading the whole thing is slow D: so let's only read the metadata
+            if bars is None:
+                bars = load_spec_bars(path)
+            bar = get_valid_bar_numbers(bars, nbars)
+            if not bar:
+                return None
+            return path, bar
+
+        # Check for lookup table
+        files = sorted(os.listdir(dataset_dir))
+
+        if "lookup_table.json" in files or lookup_table_path is not None:
+            if lookup_table_path is not None:
+                with open(lookup_table_path, "r") as f:
+                    lookup_table = json.load(f)
+            else:
+                with open(os.path.join(dataset_dir, "lookup_table.json"), "r") as f:
+                    lookup_table = json.load(f)
+            collection = [(os.path.join(dataset_dir, x), lookup_table[x]) for x in lookup_table if x in files]
+            if load_first_n >= 0:
+                collection = collection[:load_first_n]
+        else:
+            if load_first_n >= 0:
+                files = files[:load_first_n]
+            if num_workers == 0:
+                collection_ = [load(os.path.join(dataset_dir, x)) for x in tqdm(files)]
+            else:
+                collection_ = p_umap(load, [os.path.join(dataset_dir, x) for x in files], num_cpus=num_workers)
+            collection: list[tuple[str, list[int]]] = [x for x in collection_ if x]
+        self.path_bar = []
+        for path, bars in collection:
+            for bar in bars:
+                self.path_bar.append((path, bar))
+        self.nbars = nbars
+        self.dataset_dir = dataset_dir
+        self.load_first_n = load_first_n
+
+    def __len__(self):
+        return len(self.path_bar)
+
+    def __getitem__(self, idx):
+        path, bar = self.path_bar[idx]
+        s = SpectrogramCollection.load(path)
+        return process_spectrogram(s, bar, self.nbars, path)
+
+
+class SpectrogramDatasetFromCloud(Dataset):
+    """Spectrogram Dataset but instead we load from a Google Cloud Storage bucket.
+    Several key differences:
+    - We rely completely on the lookup table during initialization
+    - Default objects are present in case of error. This is done using the test specs
+    - default_specs_dir is the directory containing the default spectrograms
+    - Implements a LRU cache to store the spectrograms in memory
+    """
+
+    def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset,
+                 credentials_path: str, bucket_name: str, cache_dir: str, nbars: int = 4, size_limit_mb: int = 16384,
+                 load_first_n_dataset: int = -1):
+        # Confirm google cloud storage is installed
+        try:
+            import google.cloud.storage
+        except ImportError:
+            raise ImportError("Please install google-cloud-storage to use SpectrogramDatasetFromCloud")
+        from google.cloud import storage
+        from google.oauth2 import service_account
+
+        credentials = service_account.Credentials.from_service_account_file(credentials_path)
+        storage_client = storage.Client(credentials=credentials)
+        self.bucket = storage_client.bucket(bucket_name)
+
+        # Perform lookup
+        if not os.path.exists(lookup_table_path):
+            raise ValueError(f"Lookup table {lookup_table_path} does not exist")
+        with open(lookup_table_path, "r") as f:
+            lookup_table = json.load(f)
+        collection = [(x, lookup_table[x]) for x in lookup_table]
+        if load_first_n_dataset >= 0:
+            collection = collection[:load_first_n_dataset]
+        self.path_bar = []
+        for path, bars in collection:
+            for bar in bars:
+                self.path_bar.append((path, bar))
+        self.nbars = nbars
+
+        # Load default objects
+        self.default_specs = default_specs
+        self.lookup_table_path = lookup_table_path
+        self.default_specs_loaded = [
+            self.default_specs[i] for i in trange(len(self.default_specs), desc="Processing spectrograms")
+        ]
+
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir)
+        self.cache_dir = cache_dir
+        self.size_limit = size_limit_mb * 1024 * 1024
+        self.cache = {x: 0 for x in os.listdir(cache_dir) if x.endswith(".spec.zip")}
+        self._counter = 0
+        self._to_delete = []
+
+    def __len__(self):
+        return len(self.path_bar)
+
+    def clear_cache(self):
+        """Clears the cache"""
+        ### Clear cache files ###
+        deleted = []
+        for file in self._to_delete:
+            try:
+                os.remove(os.path.join(self.cache_dir, file))
+                deleted.append(file)
+            except Exception as e:
+                pass
+        self._to_delete = [x for x in self._to_delete if x not in deleted]
+
+        # Get size of cache directory
+        size = sum(os.path.getsize(os.path.join(self.cache_dir, x)) for x in os.listdir(self.cache_dir) if x.endswith(".spec.zip"))
+        while size > self.size_limit:
+            # Sort by last accessed
+            to_remove = min(self.cache.items(), key=lambda x: x[1])
+            to_remove_fp = os.path.join(self.cache_dir, to_remove[0])
+            if not os.path.exists(to_remove_fp):
+                del self.cache[to_remove[0]]
+                continue
+
+            try:
+                file_size = os.path.getsize(to_remove_fp)
+                os.remove(os.path.join(self.cache_dir, to_remove[0]))
+                size -= file_size
+                del self.cache[to_remove[0]]
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                self._to_delete.append(to_remove[0])
+
+    def __getitem__(self, idx):
+        def load_from_drive(file_name: str):
+            try:
+                blob = self.bucket.blob(file_name)
+                local_file_path = os.path.join(self.cache_dir, file_name)
+                if not os.path.exists(local_file_path):
+                    blob.download_to_filename(local_file_path)
+                self.cache[file_name] = self._counter
+                s = SpectrogramCollection.load(local_file_path)
+                self._counter += 1
+                return s
+            except Exception as e:
+                print(f"An error occurred: {e}")
+                return None
+
+        path, bar = self.path_bar[idx]
+        s = load_from_drive(path)
+        if s is None:
+            print(f"Failed to load {path}. Using default spectrograms instead.")
+            default_idx = random.randint(0, len(self.default_specs_loaded) - 1)
+            return self.default_specs_loaded[default_idx]
+
+        try:
+            self.clear_cache()
+        except Exception as e:
+            print(f"An error occured while clearing cache: {e}")
+        return process_spectrogram(s, bar, self.nbars, path)
+
+
 def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
     """Loads the available bars from a spectrogram data file"""
     with zipfile.ZipFile(path, 'r') as zip_ref:
@@ -371,9 +554,8 @@ def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int
     return valids
 
 
-def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str | None = None) -> torch.Tensor:
-    """Processes the spectrogram data from a SpectrogramCollection object into a training object
-    path is only used for error messages"""
+def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str) -> torch.Tensor:
+    """Processes the spectrogram data from a SpectrogramCollection object into a training object"""
     tensors = []
     for part in "VDIB":
         # Spectrogram is in CHW format
@@ -391,72 +573,32 @@ def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: st
     return data
 
 
-def features_to_audio(images: Tensor):
-    assert images.shape in (
-        (4, 2, 512, 512),
-        (4, 512, 512),
-    ), f"Invalid shape {images.shape}"
-    specs = SpectrogramCollection(
-        target_width=TARGET_FEATURES,
-        target_height=TARGET_FEATURES,
-        sample_rate=TARGET_SR,
-        hop_length=512,
-        n_fft=NFFT,
-        win_length=NFFT,
-        max_value=SPEC_MAX_VALUE,
-        power=SPEC_POWER,
-        format="png",
+def load_dataset(lookup_table_path: str, local_dataset_dir: str, *,
+                 credentials_path: str | None = None, bucket_name: str | None = None, cache_dir: str | None = None,
+                 backup_dataset_first_n: int | None = None,
+                 nbars: int = 4) -> SpectrogramDataset | SpectrogramDatasetFromCloud:
+    """Loads a dataset from a local directory or a Google Cloud Storage bucket
+    if credentials_path and bucket_name are provided, loads from the Google Cloud Storage,
+    and local_dataset_dir functions as the default spectrogram directory.
+    Otherwise, loads from the local directory.
+    """
+    if credentials_path is not None and bucket_name is not None:
+        if cache_dir is None:
+            cache_dir = tempfile.mkdtemp()
+        if backup_dataset_first_n is None:
+            backup_dataset_first_n = -1
+        return SpectrogramDatasetFromCloud(
+            lookup_table_path=lookup_table_path,
+            default_specs=SpectrogramDataset(dataset_dir=local_dataset_dir, num_workers=0, load_first_n=backup_dataset_first_n),
+            credentials_path=credentials_path,
+            bucket_name=bucket_name,
+            cache_dir=cache_dir,
+            nbars=nbars
+        )
+    return SpectrogramDataset(
+        dataset_dir=local_dataset_dir,
+        nbars=nbars,
+        num_workers=4,
+        load_first_n=-1,
+        lookup_table_path=lookup_table_path
     )
-
-    # Image shape is (4, 512, 512)
-    parts = {}
-    for im, part in zip(images, "VDIB"):
-        if images.shape == (4, 512, 512):
-            im = im[None]
-        audio = specs.spectrogram_to_audio(im)
-        audio = audio.change_speed(audio.duration/8)
-
-        parts[part] = audio
-
-    return DemucsCollection(
-        vocals=parts["V"],
-        drums=parts["D"],
-        other=parts["I"],
-        bass=parts["B"],
-    )
-
-
-def get_random_spectrogram_data(
-    dataset: SongDataset,
-    batch_size: int | None = None,
-    nbars: int = 4,
-    split: typing.Literal["train", "test", "val"] = "train",
-):
-    dataset.register("spectrograms", "{video_id}.spec.zip")
-    split_ = TRAIN_SPLIT if split == "train" else VALIDATION_SPLIT if split == "val" else TEST_SPLIT
-    urls = dataset.read_info_urls(split_)
-    chosen = set()
-    invalid_urls: set[YouTubeURL] = set()
-    tensors = []
-    batch_size_ = batch_size if batch_size is not None else 1
-    while len(tensors) < batch_size_:
-        url = random.choice(list(urls - invalid_urls))
-        spec_path = dataset.get_path("spectrograms", url)
-        if not os.path.exists(spec_path):
-            invalid_urls.add(url)
-            continue
-        specs = load_spec_bars(spec_path)
-        valid_bars = get_valid_bar_numbers(specs, nbars)
-        if not valid_bars:
-            invalid_urls.add(url)
-            continue
-        bar = random.choice(valid_bars)
-        if (url, bar) in chosen:
-            continue
-        chosen.add((url, bar))
-        s = SpectrogramCollection.load(spec_path)
-        t = process_spectrogram(s, bar, nbars, spec_path)
-        if batch_size is None:
-            return t
-        tensors.append(t)
-    return torch.stack(tensors)

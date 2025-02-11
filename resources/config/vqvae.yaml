@@ -5,7 +5,11 @@ dataset_params:
   im_channels : 4
   im_size : 512
   num_workers_ds : 0 # Number of workers for loading the dataset
-  song_dataset_path: "./resources/dataset"
+  train_lookup_table_path: "./resources/lookup_table_train.json"
+  val_lookup_table_path: "./resources/lookup_table_val.json"
+  credentials_path: "./resources/key/key.json"
+  bucket_name: "project-remucs-spectrograms-1"
+  cache_dir: "./resources/spec_cache"
   val_count: 200 # Number of validation samples
   backup_dataset_first_n_train: 10
   backup_dataset_first_n_val: 3
@@ -27,13 +31,13 @@ autoencoder_params:
 train_params:
   seed : 1943
   num_workers_dl: 0
-  autoencoder_batch_size: 4 # Maximum batch size on a single A6000 GPU with 48GB VRAM
+  autoencoder_batch_size: 6 # Maximum batch size on a single A6000 GPU with 48GB VRAM
   disc_start: 4096     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
   perceptual_weight: 1
-  target_steps: 500000
+  epochs: 2
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512

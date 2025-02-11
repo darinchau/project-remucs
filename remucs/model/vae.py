@@ -517,6 +517,34 @@ class SpectrogramPatchModel(nn.Module):
         return x
 
 
+def vae_output_to_audio(images: Tensor):
+    assert images.shape == (4, TARGET_FEATURES, TARGET_FEATURES), "outputs must be in VDIB format, got {}".format(images.shape)
+    specs = SpectrogramCollection(
+        target_width=TARGET_FEATURES,
+        target_height=TARGET_FEATURES,
+        sample_rate=TARGET_SR,
+        hop_length=512,
+        n_fft=NFFT,
+        win_length=NFFT,
+        max_value=SPEC_MAX_VALUE,
+        power=SPEC_POWER,
+        format="png",
+    )
+
+    # Image shape is (4, 512, 512)
+    parts = {}
+    for im, part in zip(images, "VDIB"):
+        audio = specs.spectrogram_to_audio(im[None], nframes=TARGET_NFRAMES * 4)
+        parts[part] = audio
+
+    return DemucsCollection(
+        vocals=parts["V"],
+        drums=parts["D"],
+        other=parts["I"],
+        bass=parts["B"],
+    )
+
+
 def gla_loss(output: Tensor, im: Tensor) -> Tensor:
     """Calculates the Griffin-Lim loss between the original and reconstructed audio tensor.
 
