@@ -57,6 +57,7 @@ def thread_target(audio: Audio,
             backend="demucs",
             use_cache=False,
             model_path=BEAT_MODEL_PATH,
+            use_loaded_model=False,
             device=torch.device("cpu")
         )
     except Exception as e:
