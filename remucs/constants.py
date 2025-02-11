@@ -21,10 +21,10 @@ BEAT_MODEL_PATH = "./AutoMasher/resources/ckpts/beat_transformer.pt"
 CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 
 # Canonical keys for dataset infos
-REJECTED_URLS = "_project_remucs_rejected_urls" # URLs that were rejected in the dataset
-CANDIDATE_URLS = "_project_remucs_candidate_urls" # URLs that are candidates for the dataset
-PROCESSED_URLS = "_project_remucs_processed_urls" # URLs that have been processed
-REJECTED_SPECTROGRAMS_URLS = "_project_remucs_rejected_spectrograms_urls" # URLs that were rejected in the spectrogram generation
+REJECTED_URLS = "_project_remucs_rejected_urls"  # URLs that were rejected in the dataset
+CANDIDATE_URLS = "_project_remucs_candidate_urls"  # URLs that are candidates for the dataset
+PROCESSED_URLS = "_project_remucs_processed_urls"  # URLs that have been processed
+REJECTED_SPECTROGRAMS_URLS = "_project_remucs_rejected_spectrograms_urls"  # URLs that were rejected in the spectrogram generation
 
 # Training splits
 TRAIN_SPLIT = "_project_remucs_train_split"

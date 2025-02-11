@@ -24,8 +24,8 @@ import torch
 from torch import nn
 
 import diffusers
-from diffusers import StableDiffusionPipeline # type: ignore
-from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel #type: ignore
+from diffusers import StableDiffusionPipeline  # type: ignore
+from diffusers import DDPMScheduler, UNet2DModel, UNet2DConditionModel  # type: ignore
 from diffusers.schedulers.scheduling_utils import SchedulerMixin
 from diffusers.optimization import get_scheduler
 from diffusers.training_utils import EMAModel
@@ -50,6 +50,8 @@ check_min_version("0.27.0.dev0")
 VAE_SCALING_FACTOR = 0.18215
 
 # Add typing to the arguments
+
+
 @dataclass(frozen=True)
 class TrainingConfig:
     output_dir: str
@@ -79,25 +81,26 @@ class TrainingConfig:
     acc_seed: int
 
     # Dataset params
-    train_lookup_table_path: str # Path to the cloud dataset lookup table
-    val_lookup_table_path: str # Path to the cloud dataset lookup table
-    credentials_path: str # Path to the cloud credentials
-    bucket_name: str # Name of the google cloud bucket for the big dataset
-    cache_dir: str # Directory for storing the cache
+    train_lookup_table_path: str  # Path to the cloud dataset lookup table
+    val_lookup_table_path: str  # Path to the cloud dataset lookup table
+    credentials_path: str  # Path to the cloud credentials
+    bucket_name: str  # Name of the google cloud bucket for the big dataset
+    cache_dir: str  # Directory for storing the cache
     nbars: int
-    dataset_dir: str # The dir for the local batch
-    load_first_n_data: int # Number of data to load first, set to -1 to load all data
+    dataset_dir: str  # The dir for the local batch
+    load_first_n_data: int  # Number of data to load first, set to -1 to load all data
 
     # VQVAE params
     vae_ckpt_path: str
 
     # Loading the VQVAE model
     model_id: str
-    initial_prompt: str # By freezing the prompt, we specify the initial prompt for the model
+    initial_prompt: str  # By freezing the prompt, we specify the initial prompt for the model
     freeze_initial_prompt: bool
 
     # Project params
     project_name: str
+
 
 def parse_args(path: str, vae_ckpt_path: str, train_lookup_table_path: str = "./resources/lookup_table_train.json",
                val_lookup_table_path: str = "./resources/lookup_table_val.json", **kwargs) -> TrainingConfig:
@@ -108,6 +111,7 @@ def parse_args(path: str, vae_ckpt_path: str, train_lookup_table_path: str = "./
     config['val_lookup_table_path'] = val_lookup_table_path
     config.update(kwargs)
     return TrainingConfig(**config)
+
 
 def load_vae(args_path: str, args: TrainingConfig, device):
     # Load the VQVAE model
@@ -120,6 +124,7 @@ def load_vae(args_path: str, args: TrainingConfig, device):
     sd = torch.load(args.vae_ckpt_path, map_location=device)
     model.load_state_dict(sd)
     return model
+
 
 def load_unet_model(args: TrainingConfig, device):
     # Loads the UNet model and scheduler.
@@ -151,6 +156,7 @@ def load_unet_model(args: TrainingConfig, device):
 
     return unet, scheduler, pe
 
+
 def load_train_dataset(args: TrainingConfig):
     im_dataset = SpectrogramDatasetFromCloud(
         lookup_table_path=args.train_lookup_table_path,
@@ -161,6 +167,7 @@ def load_train_dataset(args: TrainingConfig):
         nbars=args.nbars,
     )
     return im_dataset
+
 
 def load_val_dataset(args: TrainingConfig):
     im_dataset = SpectrogramDatasetFromCloud(
@@ -173,12 +180,13 @@ def load_val_dataset(args: TrainingConfig):
     )
     return im_dataset
 
+
 def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DDPMScheduler, vae: VQVAE, device, sample_prefix: str = "sample_"):
     scheduler.set_timesteps(50, device)
     timesteps = scheduler.timesteps
     embeds, _ = prompt_embeds()
     with torch.no_grad():
-        latents = randn_tensor((1, 4, 64, 64), dtype = embeds.dtype, device = device)
+        latents = randn_tensor((1, 4, 64, 64), dtype=embeds.dtype, device=device)
         for i, t in enumerate(timesteps):
             latent_model_input = scheduler.scale_model_input(latents, t)
             noise_pred = unet(
@@ -195,6 +203,7 @@ def sample(unet: UNet2DConditionModel, prompt_embeds: PromptEmbed, scheduler: DD
         images = vae.decode(latents)
     audio = vae_output_to_audio(images)
     audio.save(f"{sample_prefix}{t}.mp3")
+
 
 def save_model(accelerator: Accelerator,
                args: TrainingConfig,
@@ -218,6 +227,7 @@ def save_model(accelerator: Accelerator,
 
     if args.use_ema:
         ema_model.restore(unet.parameters())
+
 
 def main(config_path: str,
          vae_ckpt_path: str,
@@ -264,7 +274,7 @@ def main(config_path: str,
 
     if args.enable_xformers_memory_efficient_attention:
         if is_xformers_available():
-            import xformers # type: ignore
+            import xformers  # type: ignore
 
             if version.parse(xformers.__version__) == version.parse("0.0.16"):
                 print("xFormers 0.0.16 cannot be used for training in some GPUs. If you observe problems during training, please update xFormers to at least 0.0.17. See https://huggingface.co/docs/diffusers/main/en/optimization/xformers for more details.")
@@ -377,7 +387,7 @@ def main(config_path: str,
                 0, noise_scheduler.config["num_train_timesteps"], (latents.shape[0],), device=im.device
             ).long()
 
-            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps) #type: ignore
+            noisy_latents = noise_scheduler.add_noise(latents, noise, timesteps)  # type: ignore
 
             # Forward pass
             with accelerator.autocast():
@@ -438,6 +448,7 @@ def main(config_path: str,
         # Save the model after the epoch
         save_model(accelerator, args, model, prompt_embeds, ema_model, f"model-{epoch}.pt")
     accelerator.end_training()
+
 
 if __name__ == "__main__":
     config_path = "./resources/config/unet.yaml"

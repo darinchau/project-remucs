@@ -10,6 +10,7 @@ from ..spectrogram import SpectrogramCollection
 from ..constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_POWER, TARGET_NFRAMES
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 
+
 def get_time_embedding(time_steps: Tensor, temb_dim: int):
     r"""
     Convert time steps tensor into an embedding using the
@@ -40,6 +41,7 @@ class DownBlock(nn.Module):
     2. Attention block
     3. Downsample
     """
+
     def __init__(self, in_channels, out_channels, down_sample, num_heads, num_layers, attn, norm_channels, use_gradient_checkpointing=False):
         super().__init__()
         self.use_gradient_checkpointing = use_gradient_checkpointing
@@ -105,7 +107,7 @@ class DownBlock(nn.Module):
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
                 if self.use_gradient_checkpointing:
-                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)  # type: ignore
                 else:
                     out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
@@ -185,7 +187,7 @@ class MidBlock(nn.Module):
             in_attn = self.attention_norms[i](in_attn)
             in_attn = in_attn.transpose(1, 2)
             if self.use_gradient_checkpointing:
-                out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
+                out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)  # type: ignore
             else:
                 out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
             out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
@@ -282,12 +284,13 @@ class UpBlock(nn.Module):
                 in_attn = self.attention_norms[i](in_attn)
                 in_attn = in_attn.transpose(1, 2)
                 if self.use_gradient_checkpointing:
-                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn) # type: ignore
+                    out_attn, _ = checkpoint(self.attentions[i], in_attn, in_attn, in_attn)  # type: ignore
                 else:
                     out_attn, _ = self.attentions[i](in_attn, in_attn, in_attn)
                 out_attn = out_attn.transpose(1, 2).reshape(batch_size, channels, h, w)
                 out = out + out_attn
         return out
+
 
 @dataclass
 class VQVAEConfig:
@@ -303,6 +306,7 @@ class VQVAEConfig:
     norm_channels: int
     num_heads: int
     gradient_checkpointing: bool
+
 
 class VQVAE(nn.Module):
     def __init__(self, im_channels, model_config: VQVAEConfig):
@@ -459,30 +463,29 @@ class VQVAE(nn.Module):
         out = self.decode(z)
         return out, z, quant_losses
 
-import torch
-from torch import nn, Tensor
-import torch.nn.functional as F
 
 TARGET_FEATURES = 512
+
 
 class SpectrogramPatchModel(nn.Module):
     """This uses the idea of PatchGAN but changes the architecture to use Conv2d layers on each bar (4, 128, 512) patches
 
     Assumes input is of shape (B, 4, 512, 512), outputs a tensor of shape (B, 4, 4)"""
+
     def __init__(self, target_features: int = TARGET_FEATURES):
         super(SpectrogramPatchModel, self).__init__()
         # Define a simple CNN architecture for each patch
         self.conv1 = nn.Conv2d(4, 16, kernel_size=3, padding=1)  # Output: (B, 16, 128, 512)
         self.pool11 = nn.AdaptiveMaxPool2d((128, 256))
         self.pool12 = nn.AdaptiveAvgPool2d((64, 256))
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1) # Output: (B, 32, 64, 256)
+        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)  # Output: (B, 32, 64, 256)
         self.pool21 = nn.AdaptiveMaxPool2d((64, 128))
         self.pool22 = nn.AdaptiveAvgPool2d((32, 128))
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # Output: (B, 64, 32, 128)
+        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # Output: (B, 64, 32, 128)
         self.pool31 = nn.AdaptiveMaxPool2d((32, 32))
         self.pool32 = nn.AdaptiveAvgPool2d((8, 32))
         self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Output: (B, 128, 8, 32)
-        self.fc = nn.Conv2d(128, 4, (8, 32)) # Equivalent to FC layers over each channel
+        self.fc = nn.Conv2d(128, 4, (8, 32))  # Equivalent to FC layers over each channel
         self.target_features = target_features
 
     def forward(self, x: Tensor):
@@ -512,6 +515,7 @@ class SpectrogramPatchModel(nn.Module):
         x = self.fc(x)
         x = x.view(batch_size, num_patches, channels, -1).squeeze(-1).squeeze(-1)
         return x
+
 
 def gla_loss(output: Tensor, im: Tensor) -> Tensor:
     """Calculates the Griffin-Lim loss between the original and reconstructed audio tensor.

@@ -7,6 +7,7 @@ import time
 base_dir = "./resources/models/vqvae"
 FILE_LIMIT = 10
 
+
 def main():
     try:
         a = int(sys.argv[1])
@@ -37,6 +38,7 @@ def main():
             except Exception as e:
                 print(e)
         a += 512
+
 
 if __name__ == "__main__":
     main()

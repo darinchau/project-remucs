@@ -26,6 +26,7 @@ from AutoMasher.fyp import SongDataset
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 def read_config(config_path: str):
     with open(config_path, 'r') as file:
         try:
@@ -35,6 +36,7 @@ def read_config(config_path: str):
             exit(1)
     return config
 
+
 def set_seed(seed: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -42,8 +44,9 @@ def set_seed(seed: int):
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
 
+
 def train(config_path: str, output_dir: str, dataset_dir: str, *, start_from_iter: int = 0,
-          dataset_params = None, train_params = None, autoencoder_params = None):
+          dataset_params=None, train_params=None, autoencoder_params=None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -142,10 +145,10 @@ def train(config_path: str, output_dir: str, dataset_dir: str, *, start_from_ite
     while step_count < target_steps:
 
         im = get_random_spectrogram_data(
-            batch_size = train_config['autoencoder_batch_size'],
-            nbars = dataset_config['nbars'],
-            dataset = sd,
-            split = 'train'
+            batch_size=train_config['autoencoder_batch_size'],
+            nbars=dataset_config['nbars'],
+            dataset=sd,
+            split='train'
         )
 
         step_count += 1
@@ -174,8 +177,8 @@ def train(config_path: str, output_dir: str, dataset_dir: str, *, start_from_ite
         recon_losses.append(recon_loss.item())
         recon_loss = recon_loss / acc_steps
         g_loss: torch.Tensor = (recon_loss +
-                    (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
-                    (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps))
+                                (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
+                                (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps))
         codebook_losses.append(train_config['codebook_weight'] * quantize_losses['codebook_loss'].item())
 
         # Adversarial loss only if disc_step_start steps passed
@@ -232,10 +235,10 @@ def train(config_path: str, output_dir: str, dataset_dir: str, *, start_from_ite
                 val_codebook_losses = []
                 for _ in trange(val_count, desc=f"Performing validation (step={step_count})"):
                     val_im = get_random_spectrogram_data(
-                        batch_size = train_config['autoencoder_batch_size'],
-                        nbars = dataset_config['nbars'],
-                        dataset = sd,
-                        split = 'val'
+                        batch_size=train_config['autoencoder_batch_size'],
+                        nbars=dataset_config['nbars'],
+                        dataset=sd,
+                        split='val'
                     )
                     val_im = val_im.float().to(device).mean(dim=2)
                     val_model_output = model(val_im)

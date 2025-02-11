@@ -20,7 +20,7 @@ try:
     from pytubefix import Playlist, YouTube, Channel
 except ImportError:
     try:
-        from pytube import Playlist, YouTube, Channel # type: ignore
+        from pytube import Playlist, YouTube, Channel  # type: ignore
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
@@ -44,6 +44,7 @@ from remucs.constants import (
 )
 
 from remucs.spectrogram import process_spectrogram_features, SpectrogramCollection
+
 
 def main(path: str):
     song_ds = SongDataset(path, max_dir_size=None)
@@ -112,6 +113,7 @@ def main(path: str):
         tqdm.write(f"Finished processing {url}")
 
     tqdm.write("All threads finished.")
+
 
 if __name__ == "__main__":
     import sys

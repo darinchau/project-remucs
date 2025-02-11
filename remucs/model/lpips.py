@@ -11,8 +11,10 @@ import torchvision
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 MODEL_PATH = "./resources/ckpts/vgg_lpips.pth"
 
+
 def spatial_average(in_tens: Tensor, keepdim=True):
     return in_tens.mean([2, 3], keepdim=keepdim)
+
 
 class vgg16(torch.nn.Module):
     def __init__(self, requires_grad=False, pretrained=True):
@@ -58,6 +60,8 @@ class vgg16(torch.nn.Module):
         return out
 
 # Learned perceptual metric
+
+
 class LPIPS(nn.Module):
     """ Learned Perceptual Image Patch Similarity (LPIPS) metric.
 
@@ -67,6 +71,7 @@ class LPIPS(nn.Module):
 
        returns:
        - d: (N, ) Tensor of distances between the image pairs"""
+
     def __init__(self, means: list[float], stds: list[float], use_dropout=True):
         super(LPIPS, self).__init__()
 
@@ -144,8 +149,10 @@ class LPIPS(nn.Module):
 
         return val
 
+
 class NetLinLayer(nn.Module):
     ''' A single linear layer which does a 1x1 conv '''
+
     def __init__(self, chn_in, chn_out=1, use_dropout=False):
         super(NetLinLayer, self).__init__()
 
@@ -157,10 +164,11 @@ class NetLinLayer(nn.Module):
         out = self.model(x)
         return out
 
+
 def load_lpips(mean: tuple[float, ...] = (0.1885, 0.1751, 0.1698, 0.0800), std: tuple[float, ...] = (0.1164, 0.1066, 0.1065, 0.0672), use_dropout: bool = True) -> LPIPS:
     """ Load the LPIPS model with the given means and stds. The default is calculated over the whole training + val set """
     return LPIPS(
-        means = list(mean),
-        stds = list(std),
-        use_dropout = use_dropout
+        means=list(mean),
+        stds=list(std),
+        use_dropout=use_dropout
     )

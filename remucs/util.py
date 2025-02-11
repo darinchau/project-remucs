@@ -2,6 +2,8 @@ from __future__ import annotations
 from typing import Generic, TypeVar, Optional, Callable, Type
 
 T = TypeVar('T')
+
+
 class Result(Generic[T]):
     def __init__(self, value: T | None, success: bool, error: Optional[str] = None):
         self.value = value
@@ -31,5 +33,5 @@ class Result(Generic[T]):
     def unwrap(self) -> T:
         if not self.successful:
             raise ValueError(self.error)
-        assert self.value is not None # to make mypy happy
+        assert self.value is not None  # to make mypy happy
         return self.value

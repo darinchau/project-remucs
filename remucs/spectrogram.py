@@ -34,6 +34,7 @@ from .util import Result
 
 PartIDType = Literal["V", "D", "I", "B", "N"]
 
+
 class SpectrogramCollection:
     @staticmethod
     def get_spectrogram_id(part_id: PartIDType, bar_number: int, bar_start: float, bar_duration: float):
@@ -43,7 +44,7 @@ class SpectrogramCollection:
         assert bar_duration > 0, "Bar duration must be greater than 0"
 
         arr = np.array([bar_start, bar_duration], dtype=np.float32)
-        arr.dtype = np.uint8 # type: ignore
+        arr.dtype = np.uint8  # type: ignore
 
         # Make padding a multiple of 3 so that base64 encoding doesn't add padding
         arr = np.concatenate((arr, np.zeros(1, dtype=np.uint8)))
@@ -64,7 +65,7 @@ class SpectrogramCollection:
         x = fn[-11:] + "A"
         b = base64.urlsafe_b64decode(x)
         arr = np.frombuffer(b, dtype=np.uint8)[:-1]
-        arr.dtype = np.float32 # type: ignore
+        arr.dtype = np.float32  # type: ignore
         bar_start, bar_duration = arr
         assert bar_number < 1000, "Bar number must be less than 1000"
         assert bar_start >= 0, "Bar start must be greater than or equal to 0"
@@ -231,18 +232,18 @@ class SpectrogramCollection:
         """Add an audio to the collection. Performs the necessary conversion to a spectrogram."""
         spectrogram = torch.stft(
             audio.data,
-            n_fft = self.n_fft,
-            hop_length = self.hop_length,
-            win_length = self.win_length,
-            window = torch.hann_window(window_length = self.win_length, device = audio.data.device),
-            center = True,
-            normalized = False,
-            onesided = True,
-            return_complex = True
+            n_fft=self.n_fft,
+            hop_length=self.hop_length,
+            win_length=self.win_length,
+            window=torch.hann_window(window_length=self.win_length, device=audio.data.device),
+            center=True,
+            normalized=False,
+            onesided=True,
+            return_complex=True
         ).transpose(1, 2)
 
         spectrogram = torch.abs(spectrogram)
-        spectrogram = spectrogram.clamp(min = 0, max = self.max_value)
+        spectrogram = spectrogram.clamp(min=0, max=self.max_value)
         data = spectrogram / self.max_value
         data = torch.pow(data, self.power)
         return self.add_spectrogram(data, part_id, bar_number, bar_start, bar_duration)
@@ -266,12 +267,13 @@ class SpectrogramCollection:
         data_np = data.transpose(1, 2).numpy()
         # For some reason torchaudio griffin lim does not perform a good reconstruction
         data_np = librosa.griffinlim(data_np,
-                                  hop_length=self.hop_length,
-                                  win_length=self.win_length,
-                                  n_fft=self.n_fft,
-                                  length=nframes
-                                ) # Returns numpy array (2, T)
+                                     hop_length=self.hop_length,
+                                     win_length=self.win_length,
+                                     n_fft=self.n_fft,
+                                     length=nframes
+                                     )  # Returns numpy array (2, T)
         return Audio(torch.from_numpy(data_np), self.sample_rate)
+
 
 def process_spectrogram_features(audio: Audio,
                                  parts: DemucsCollection,
@@ -289,7 +291,7 @@ def process_spectrogram_features(audio: Audio,
         raise ValueError(f"Audio duration and parts duration mismatch: {audio.duration} {parts.get_duration()}")
 
     # Check beat alignment again just in case we change the verification rules
-    beat_align = np.abs(br.beats[:, None] - br.downbeats[None, :]).argmin(axis = 0)
+    beat_align = np.abs(br.beats[:, None] - br.downbeats[None, :]).argmin(axis=0)
     beat_align[:-1] = beat_align[1:] - beat_align[:-1]
 
     # Resample the audio and parts to the target sample rate
@@ -326,7 +328,7 @@ def process_spectrogram_features(audio: Audio,
             bar = aud.slice_seconds(bar_start, bar_end).change_speed(bar_duration/TARGET_DURATION)
 
             # Pad the audio to exactly the target nframes for good measures
-            bar = bar.pad(TARGET_NFRAMES, front = False)
+            bar = bar.pad(TARGET_NFRAMES, front=False)
             specs.add_audio(bar, part_id, bar_number, bar_start, bar_duration)
 
     if len(specs.spectrograms) > 0 and save_path is not None:
@@ -339,6 +341,7 @@ def process_spectrogram_features(audio: Audio,
         return Result.failure("No spectrograms returned")
 
     return Result.success(specs)
+
 
 def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
     """Loads the available bars from a spectrogram data file"""
@@ -357,6 +360,7 @@ def load_spec_bars(path: str) -> list[tuple[PartIDType, int]]:
             bars.append((part_id, bar_number))
     return bars
 
+
 def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int = 4) -> list[int]:
     valids: list[int] = []
     largest = max([x for _, x in spectrograms])
@@ -366,6 +370,7 @@ def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int
             valids.append(i)
     return valids
 
+
 def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str | None = None) -> torch.Tensor:
     """Processes the spectrogram data from a SpectrogramCollection object into a training object
     path is only used for error messages"""
@@ -373,17 +378,18 @@ def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: st
     for part in "VDIB":
         # Spectrogram is in CHW format
         # Where H is the time axis. Need concat along time
-        assert part in ("V", "D", "I", "B") # To pass the typechecker
+        assert part in ("V", "D", "I", "B")  # To pass the typechecker
         specs = [s.get_spectrogram(part, i) for i in range(bar, bar + nbars)]
         if not all(spec is not None for spec in specs):
             raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
-        if not all(spec.shape == (2, 128, 512) for spec in specs): # type: ignore
+        if not all(spec.shape == (2, 128, 512) for spec in specs):  # type: ignore
             raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
-        data = torch.cat(specs, dim=1) # type: ignore
+        data = torch.cat(specs, dim=1)  # type: ignore
         tensors.append(data)
     data = torch.stack(tensors)
     # Return shape: 4, 2, H, W (should be 512, 512)
     return data
+
 
 def features_to_audio(images: Tensor):
     assert images.shape in (
@@ -418,6 +424,7 @@ def features_to_audio(images: Tensor):
         other=parts["I"],
         bass=parts["B"],
     )
+
 
 def get_random_spectrogram_data(
     dataset: SongDataset,

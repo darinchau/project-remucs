@@ -21,7 +21,7 @@ try:
     from pytubefix import Playlist, YouTube, Channel
 except ImportError:
     try:
-        from pytube import Playlist, YouTube, Channel # type: ignore
+        from pytube import Playlist, YouTube, Channel  # type: ignore
     except ImportError:
         raise ImportError("Please install the pytube library to download the audio. You can install it using `pip install pytube` or `pip install pytubefix`")
 
@@ -52,8 +52,10 @@ RANDOM_WAIT_TIME_MIN = 15
 RANDOM_WAIT_TIME_MAX = 60
 REST_EVERY_N_VIDEOS = 1200
 
+
 class FatalError(Exception):
     pass
+
 
 def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
     """Downloads the audio from the URLs. Yields the audio and the URL."""
@@ -95,6 +97,7 @@ def download_audio(ds: SongDataset, urls: list[YouTubeURL]):
                             future.cancel()
                         raise FatalError(f"Too many errors in a short time, has YouTube blacklisted us?")
                     error_logs.pop(0)
+
 
 def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: DatasetEntryEncoder):
     audios = download_audio(ds, urls)
@@ -157,6 +160,7 @@ def process_batch(ds: SongDataset, urls: list[YouTubeURL], *, entry_encoder: Dat
             continue
         tqdm.write(f"Waiting for the next entry...")
 
+
 def get_candidate_urls(ds: SongDataset) -> list[YouTubeURL]:
     candidates = ds.read_info(CANDIDATE_URLS)
     assert candidates is not None
@@ -196,6 +200,7 @@ def get_candidate_urls(ds: SongDataset) -> list[YouTubeURL]:
 
     return result
 
+
 def main(root_dir: str):
     """Packs the audio-infos-v3 dataset into a single, compressed dataset file."""
     ds = SongDataset(root_dir, load_on_the_fly=True, max_dir_size=None)
@@ -232,6 +237,7 @@ def main(root_dir: str):
             for _ in trange(60 * 60 * 5, desc="Resting..."):
                 time.sleep(1)
             n_videos_before_rest = REST_EVERY_N_VIDEOS
+
 
 if __name__ == "__main__":
     import sys

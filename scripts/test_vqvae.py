@@ -28,6 +28,7 @@ from remucs.constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, S
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+
 def read_config(config_path: str):
     with open(config_path, 'r') as file:
         try:
@@ -37,12 +38,14 @@ def read_config(config_path: str):
             exit(1)
     return config
 
+
 def set_seed(seed: int):
     torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
     if device == 'cuda':
         torch.cuda.manual_seed_all(seed)
+
 
 def evaluate(config_path: str, dataset_dir: str, model_path: str,
              reconstructions: int = 3, batch_size: int = 32, first_n: int = 3,

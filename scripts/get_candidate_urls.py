@@ -9,6 +9,7 @@ import json
 from AutoMasher.fyp import SongDataset, get_url
 from remucs.constants import CANDIDATE_URLS
 
+
 def get_views(x):
     s = x["views"]
     for key in ["views", "plays", "play"]:
@@ -32,6 +33,7 @@ def get_views(x):
     x["views"] = -1
     return x
 
+
 DetectorFactory.seed = 0
 
 mapping = {
@@ -42,15 +44,18 @@ mapping = {
     "en": "en"
 }
 
+
 def detect_language(x):
     try:
         language = detect(x["title"])
         x["language"] = mapping.get(language, "other")
     except LangDetectException:
-        x["language"] = "unk" # unknown
+        x["language"] = "unk"  # unknown
     return x
 
+
 keys_to_write = ['title', 'artist_names', 'album_name', 'views', "language"]
+
 
 def main(path: str):
     song_ds = SongDataset(path)
@@ -58,7 +63,7 @@ def main(path: str):
 
     if not os.path.exists(os.path.join(path, "filtered_ds")):
         ds = load_dataset("laion/LAION-DISCO-12M")
-        mapped_ds = ds["train"].map(get_views, num_proc=8) #type: ignore
+        mapped_ds = ds["train"].map(get_views, num_proc=8)  # type: ignore
         # I can do this in one line in the typical flamboyant functional programming style but the error message will be bad
         filtered_ds = mapped_ds.filter(lambda x: x["views"] > 500000, num_proc=8)
         filtered_ds = filtered_ds.filter(lambda x: x["isExplicit"] is False, num_proc=8)
@@ -77,12 +82,12 @@ def main(path: str):
 
     for entry in tqdm(filtered_ds, total=len(filtered_ds), ncols=75):
         try:
-            url = get_url(entry["song_id"]) #type: ignore
+            url = get_url(entry["song_id"])  # type: ignore
         except Exception as e:
             print(f"Cannot get url for {entry}")
             continue
         urls.append(url.video_id)
-        metadata = {k: entry[k] for k in keys_to_write} #type: ignore
+        metadata = {k: entry[k] for k in keys_to_write}  # type: ignore
         metadatas[url.video_id] = metadata
 
     with open(song_ds.get_path("info"), "r") as f:
@@ -95,6 +100,7 @@ def main(path: str):
 
     with open(song_ds.get_path("metadata"), "w") as f:
         json.dump(metadatas, f)
+
 
 if __name__ == "__main__":
     main("D:/audio-dataset-v3")

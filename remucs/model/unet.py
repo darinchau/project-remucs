@@ -1,6 +1,7 @@
 import torch
 from torch import nn, Tensor
 
+
 class PromptEmbed(nn.Module):
     def __init__(self, tensor, regularizer: float = 3):
         """A simple class to update the embeddings during training time
