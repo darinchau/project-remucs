@@ -27,23 +27,45 @@ except ImportError:
 from AutoMasher.fyp.audio.dataset import DatasetEntry, SongDataset, create_entry, DatasetEntryEncoder
 from AutoMasher.fyp import Audio
 from AutoMasher.fyp.audio.analysis import BeatAnalysisResult, DeadBeatKernel, analyse_beat_transformer
-from AutoMasher.fyp.audio.separation import DemucsAudioSeparator
+from AutoMasher.fyp.audio.separation import DemucsAudioSeparator, DemucsCollection
 from AutoMasher.fyp.util import (
     clear_cuda,
     YouTubeURL,
 )
 from itertools import zip_longest
 import json
-
+from queue import Queue
+import torch
 from remucs.constants import (
     BEAT_MODEL_PATH,
-    CHORD_MODEL_PATH,
-    REJECTED_URLS,
-    CANDIDATE_URLS,
-    PROCESSED_URLS,
 )
-
 from remucs.spectrogram import process_spectrogram_features, SpectrogramCollection
+
+
+def thread_target(audio: Audio,
+                  url: YouTubeURL,
+                  parts: DemucsCollection,
+                  save_path: str,
+                  logs: Queue[str],
+                  ):
+    t = time.time()
+    try:
+        beats = analyse_beat_transformer(
+            audio=audio,
+            url=url,
+            parts=parts,
+            backend="demucs",
+            use_cache=False,
+            model_path=BEAT_MODEL_PATH,
+            device=torch.device("cpu")
+        )
+    except Exception as e:
+        tqdm.write(f"Error analysing beats: {e}")
+        return
+    logs.put(f"Finished analysing beats for {url} (t={time.time()-t:.2f}s)")
+    t = time.time()
+    process_spectrogram_features(audio, parts, beats, save_path=save_path)
+    logs.put(f"Finished processing spectrograms for {url} (t={time.time()-t:.2f}s)")
 
 
 def main(path: str):
@@ -54,14 +76,21 @@ def main(path: str):
     audio_urls = song_ds.list_urls("audio")
     demucs = DemucsAudioSeparator()
 
+    logs = Queue()
+
     for url in audio_urls:
         clear_cuda()
 
         t = time.time()
         path = song_ds.get_path("audio", url)
         if not os.path.exists(path):
-            tqdm.write(f"File {path} does not exist, skipping...")
+            # Not necessary, but just to be safe
             continue
+
+        spec_path = song_ds.get_path("spectrograms", url)
+        if os.path.exists(spec_path):
+            continue
+
         try:
             audio = Audio.load(path)
         except Exception as e:
@@ -76,23 +105,8 @@ def main(path: str):
             continue
 
         tqdm.write(f"Finished processing parts for {url} (t={time.time()-t:.2f}s)")
-        try:
-            beats = analyse_beat_transformer(
-                audio=audio,
-                dataset=song_ds,
-                url=url,
-                parts=parts,
-                backend="demucs",
-                use_cache=False,
-                model_path=BEAT_MODEL_PATH
-            )
-        except Exception as e:
-            tqdm.write(f"Error analysing beats: {e}")
-            continue
 
-        tqdm.write(f"Finished analysing beats for {url} (t={time.time()-t:.2f}s)")
-
-        t = Thread(target=process_spectrogram_features, args=(audio, parts, beats), kwargs={"save_path": song_ds.get_path("spectrograms", url), "noreturn": True})
+        t = Thread(target=thread_target, args=(audio, url, parts, spec_path, logs))
         t.start()
         threads[url] = t
 
@@ -105,6 +119,10 @@ def main(path: str):
                 tqdm.write(f"Finished processing {url}")
 
         tqdm.write(f"{len(threads)} threads still running...")
+
+        while not logs.empty():
+            log = logs.get()
+            tqdm.write(log)
 
     tqdm.write("Waiting for all threads to finish...")
 
