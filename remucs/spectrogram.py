@@ -3,7 +3,6 @@ import shutil
 from tqdm.auto import tqdm, trange
 from p_tqdm import p_umap
 from torch.utils.data import Dataset
-from .spectrogram import SpectrogramCollection, PartIDType
 import numpy as np
 import base64
 from typing import Literal
