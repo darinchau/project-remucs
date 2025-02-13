@@ -14,7 +14,7 @@ import tempfile
 import random
 import datetime
 from PIL import Image
-from threading import Thread
+from multiprocessing import Process, Queue
 
 try:
     from pytubefix import Playlist, YouTube, Channel
@@ -34,10 +34,10 @@ from AutoMasher.fyp.util import (
 )
 from itertools import zip_longest
 import json
-from queue import Queue
 import torch
 from remucs.constants import (
     BEAT_MODEL_PATH,
+    PROCESSED_SPECTROGRAMS_URLS
 )
 from remucs.spectrogram import process_spectrogram_features, SpectrogramCollection
 
@@ -45,39 +45,35 @@ from remucs.spectrogram import process_spectrogram_features, SpectrogramCollecti
 def thread_target(audio: Audio,
                   url: YouTubeURL,
                   parts: DemucsCollection,
+                  beats: BeatAnalysisResult,
                   save_path: str,
-                  logs: Queue[str],
+                  logs: Queue,
                   ):
     t = time.time()
-    try:
-        beats = analyse_beat_transformer(
-            audio=audio,
-            url=url,
-            parts=parts,
-            backend="demucs",
-            use_cache=False,
-            model_path=BEAT_MODEL_PATH,
-            use_loaded_model=False,
-            device=torch.device("cpu")
-        )
-    except Exception as e:
-        tqdm.write(f"Error analysing beats: {e}")
-        return
-    logs.put(f"Finished analysing beats for {url} (t={time.time()-t:.2f}s)")
-    t = time.time()
-    process_spectrogram_features(audio, parts, beats, save_path=save_path)
-    logs.put(f"Finished processing spectrograms for {url} (t={time.time()-t:.2f}s)")
+    s = process_spectrogram_features(audio, parts, beats, save_path=save_path, noreturn=False)
+    if s:
+        logs.put(f"Finished processing spectrograms for {url} (t={time.time()-t:.2f}s)")
 
 
 def main(path: str):
     song_ds = SongDataset(path, max_dir_size=None)
-    threads: dict[YouTubeURL, Thread] = {}
+    processes: dict[YouTubeURL, Process] = {}
     song_ds.register("spectrograms", "{video_id}.spec.zip")
 
     audio_urls = song_ds.list_urls("audio")
     demucs = DemucsAudioSeparator()
 
     logs = Queue()
+
+    def mark_processed(url):
+        song_ds.write_info(PROCESSED_SPECTROGRAMS_URLS, url)
+        processed.add(url)
+
+    processed = song_ds.read_info_urls(PROCESSED_SPECTROGRAMS_URLS)
+    for url in tqdm(song_ds.list_urls("spectrograms"), desc="Updating processed URLs"):
+        if url in processed:
+            continue
+        mark_processed(url)
 
     for url in audio_urls:
         clear_cuda()
@@ -92,10 +88,14 @@ def main(path: str):
         if os.path.exists(spec_path):
             continue
 
+        if url in processed:
+            continue
+
         try:
             audio = Audio.load(path)
         except Exception as e:
             tqdm.write(f"Error loading audio: {e}")
+            processed.add(url)
             continue
 
         tqdm.write(f"Processing {url}")
@@ -103,23 +103,41 @@ def main(path: str):
             parts = demucs.separate(audio)
         except Exception as e:
             tqdm.write(f"Error separating audio: {e}")
+            processed.add(url)
             continue
 
         tqdm.write(f"Finished processing parts for {url} (t={time.time()-t:.2f}s)")
 
-        t = Thread(target=thread_target, args=(audio, url, parts, spec_path, logs))
-        t.start()
-        threads[url] = t
+        try:
+            beats = analyse_beat_transformer(
+                audio=audio,
+                url=url,
+                parts=parts,
+                backend="demucs",
+                use_cache=False,
+                model_path=BEAT_MODEL_PATH,
+                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
+                use_loaded_model=True,
+            )
+        except Exception as e:
+            tqdm.write(f"Error analysing beats: {e}")
+            mark_processed(url)
+            continue
 
-        keys = list(threads.keys())
+        t = Process(target=thread_target, args=(audio, url, parts, beats, spec_path, logs))
+        t.start()
+        processes[url] = t
+
+        keys = list(processes.keys())
         for url in keys:
-            t = threads[url]
+            t = processes[url]
             if not t.is_alive():
                 t.join()
-                del threads[url]
+                del processes[url]
                 tqdm.write(f"Finished processing {url}")
+                mark_processed(url)
 
-        tqdm.write(f"{len(threads)} threads still running...")
+        tqdm.write(f"{len(processes)} threads still running...")
 
         while not logs.empty():
             log = logs.get()
@@ -127,9 +145,10 @@ def main(path: str):
 
     tqdm.write("Waiting for all threads to finish...")
 
-    for url, t in threads.items():
+    for url, t in processes.items():
         t.join()
         tqdm.write(f"Finished processing {url}")
+        mark_processed(url)
 
     tqdm.write("All threads finished.")
 

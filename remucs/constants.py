@@ -24,7 +24,7 @@ CHORD_MODEL_PATH = "./AutoMasher/resources/ckpts/btc_model_large_voca.pt"
 REJECTED_URLS = "_project_remucs_rejected_urls"  # URLs that were rejected in the dataset
 CANDIDATE_URLS = "_project_remucs_candidate_urls"  # URLs that are candidates for the dataset
 PROCESSED_URLS = "_project_remucs_processed_urls"  # URLs that have been processed
-REJECTED_SPECTROGRAMS_URLS = "_project_remucs_rejected_spectrograms_urls"  # URLs that were rejected in the spectrogram generation
+PROCESSED_SPECTROGRAMS_URLS = "_project_remucs_processed_spectrograms_urls"  # URLs that have been processed
 
 # Training splits
 TRAIN_SPLIT = "_project_remucs_train_split"
