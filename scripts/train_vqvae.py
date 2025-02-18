@@ -43,7 +43,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def train(config_path: str, base_dir: str, dataset_dir: str, *, start_from_iter: int = 0,
+def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
           dataset_params=None, train_params=None, autoencoder_params=None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -56,6 +56,26 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, start_from_iter:
     if autoencoder_params is not None:
         config['autoencoder_params'].update(autoencoder_params)
 
+    dataset_dir = config['dataset_params']['dataset_dir']
+
+    # Check credentials first
+    credentials_path = config['dataset_params']['credentials_path']
+    if not os.path.exists(credentials_path):
+        print(f"Credentials file not found at {credentials_path}")
+        exit(1)
+
+    # Check cache path
+    cache_dir = config['dataset_params']['cache_dir']
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    # Check lookup tables
+    for split in ['train', 'val']:
+        lookup_table_path = config['dataset_params'][f"{split}_lookup_table_path"]
+        if not os.path.exists(lookup_table_path):
+            print(f"Lookup table not found at {lookup_table_path}")
+            exit(1)
+
     vae_config = VQVAEConfig(**config['autoencoder_params'])
 
     dataset_config = config['dataset_params']
@@ -65,9 +85,6 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, start_from_iter:
 
     # Create the model and dataset #
     model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
-
-    # Print the model parameters and bail if necessary
-    # print(model)
     print(f"Starting from iteration {start_from_iter}")
 
     numel = 0
@@ -313,9 +330,8 @@ def train(config_path: str, base_dir: str, dataset_dir: str, *, start_from_iter:
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--dataset_dir', dest='dataset_dir', type=str, default='resources/dataset')
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
-    parser.add_argument('--base_dir', dest='base_dir', type=str, default='resources/models/vqvae')
+    parser.add_argument('--output_dir', dest='output_dir', type=str, default='resources/models/vqvae')
     parser.add_argument('--start_iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
-    train(args.config_path, args.base_dir, args.dataset_dir, start_from_iter=args.start_iter)
+    train(args.config_path, args.output_dir, start_from_iter=args.start_iter)
