@@ -260,15 +260,14 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                 for param in discriminator.parameters():
                     param.requires_grad = True
 
-                disc_fake_pred = discriminator(output.detach())
-                disc_real_pred = discriminator(target)
+                disc_fake_pred: Tensor = discriminator(output[:, None]).squeeze(1)  # (B, 4)
+                disc_real_pred: Tensor = discriminator(target[:, None]).squeeze(1)  # (B, 4)
                 if train_config['disc_loss'] == 'wasserstein':
-                    disc_loss_ = disc_real_pred.mean() - disc_fake_pred.mean()
-                    lip_est = (disc_real_pred - disc_fake_pred).abs() / (((output.detach() - target) ** 2).sum(1) ** 0.5 + 1e-8)
-                    lip_loss = train_config['wasserstein_regularizer'] * ((1. - lip_est) ** 2).mean(0).view(1)
+                    disc_loss_ = (disc_real_pred - disc_fake_pred).mean()
+                    lip_dist = ((output.detach() - target) ** 2).sum(2).sum(1) ** 0.5 + 1e-8
+                    lip_est = (disc_real_pred - disc_fake_pred).abs().mean() / lip_dist
+                    lip_loss = ((1. - lip_est) ** 2).mean(0).view(())
                     disc_loss_ += lip_loss
-                    disc_losses.append(disc_loss_.item())
-                    disc_loss_ = disc_loss_ / acc_steps
                 else:
                     disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                     disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
