@@ -317,14 +317,12 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                     lip_est = (disc_real_pred - disc_fake_pred).abs().mean() / lip_dist
                     lip_loss = ((1. - lip_est) ** 2).mean(0).view(())
                     disc_loss_ += lip_loss
-                    disc_losses.append(disc_loss_.item())
-                    disc_loss_ = disc_loss_ / acc_steps
                 else:
                     disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                     disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
                     disc_loss_: Tensor = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
-                    disc_losses.append(disc_loss_.item())
-                    disc_loss_ = disc_loss_ / acc_steps
+                disc_losses.append(disc_loss_.item())
+                disc_loss_ = disc_loss_ / acc_steps
                 accelerator.backward(disc_loss_)
                 if step_count % acc_steps == 0:
                     optimizer_d.step()
