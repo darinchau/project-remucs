@@ -43,6 +43,93 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+def sanity_check(config: dict):
+    credentials_path = config['dataset_params']['credentials_path']
+    if not os.path.exists(credentials_path):
+        raise ValueError(f"Credentials file not found at {credentials_path}")
+
+    # Check cache path
+    cache_dir = config['dataset_params']['cache_dir']
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+
+    # Check lookup tables
+    for split in ['train', 'val']:
+        lookup_table_path = config['dataset_params'][f"{split}_lookup_table_path"]
+        if not os.path.exists(lookup_table_path):
+            raise ValueError(f"Lookup table not found at {lookup_table_path}")
+
+    # Check training config
+    _available_disc_losses = ['bce', 'mse', 'wasserstein']
+    if config['train_params']['disc_loss'] not in _available_disc_losses:
+        raise ValueError(f"Discriminator loss must be one of {_available_disc_losses}")
+
+    dataset_dir = config['dataset_params']['dataset_dir']
+    if not os.path.exists(dataset_dir):
+        raise ValueError(f"Dataset directory not found at {dataset_dir}")
+
+
+def get_loss(
+    im: Tensor,
+    model: VQVAE,
+    train_config: dict,
+    reconstruction_loss: nn.Module,
+    perceptual_loss: nn.Module,
+    disc_loss: nn.Module,
+    discriminator: Discriminator | None = None,
+    calculate_losses: bool = True
+):
+    im = im.float().to(device)
+
+    # im is (B, 5, 2, 512, 512) -> take the mean of two channels
+    # (nbatches, ninstruments, nchannels, T, nfeatures)
+    im = im.mean(dim=2)
+
+    inputs = im[:, :-1]  # (B, 4, 512, 512)
+    target = im[:, -1]  # (B, 512, 512)
+
+    batch = inputs.shape[0]
+
+    with autocast('cuda'):
+        model_output = model(inputs)
+    output, _, quantize_losses = model_output
+    output = output.squeeze(1)
+
+    assert output.shape == (batch, 512, 512)
+    assert target.shape == (batch, 512, 512)
+
+    losses = {}
+
+    if not calculate_losses:
+        return output, target, losses
+
+    ######### Optimize Generator ##########
+    # L2 Loss
+    with autocast('cuda'):
+        recon_loss = reconstruction_loss(output, target)
+    codebook_loss = quantize_losses['codebook_loss']
+    commitment_loss = quantize_losses['commitment_loss']
+    losses['recon_loss'] = recon_loss
+    losses['codebook_loss'] = codebook_loss
+    losses['commitment_loss'] = commitment_loss
+
+    if discriminator is not None:
+        disc_fake_pred: Tensor = discriminator(output[:, None]).squeeze(1)
+        if train_config['disc_loss'] == 'wasserstein':
+            disc_fake_loss = disc_fake_pred.mean()
+        else:
+            disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+        losses['disc_fake_loss'] = disc_fake_loss
+    else:
+        losses['disc_fake_loss'] = torch.zeros(1, device=device)
+
+    # Perceptual Loss
+    lpips_loss = torch.mean(perceptual_loss(output, target, normalize=True))
+    losses['lpips_loss'] = lpips_loss
+
+    return output, target, losses
+
+
 def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
           dataset_params=None, train_params=None, autoencoder_params=None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
@@ -58,30 +145,8 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
 
     dataset_dir = config['dataset_params']['dataset_dir']
 
-    # Check credentials first
-    credentials_path = config['dataset_params']['credentials_path']
-    if not os.path.exists(credentials_path):
-        raise ValueError(f"Credentials file not found at {credentials_path}")
-    del credentials_path
-
-    # Check cache path
-    cache_dir = config['dataset_params']['cache_dir']
-    if not os.path.exists(cache_dir):
-        os.makedirs(cache_dir)
-    del cache_dir
-
-    # Check lookup tables
-    for split in ['train', 'val']:
-        lookup_table_path = config['dataset_params'][f"{split}_lookup_table_path"]
-        if not os.path.exists(lookup_table_path):
-            raise ValueError(f"Lookup table not found at {lookup_table_path}")
-        del lookup_table_path
-
-    # Check training config
-    _available_disc_losses = ['bce', 'mse', 'wasserstein']
-    if config['train_params']['disc_loss'] not in _available_disc_losses:
-        raise ValueError(f"Discriminator loss must be one of {_available_disc_losses}")
-    del _available_disc_losses
+    # Sanity checks
+    sanity_check(config)
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
 
@@ -193,6 +258,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
         recon_losses = []
         codebook_losses = []
         perceptual_losses = []
+        commit_losses = []
         disc_losses = []
         gen_losses = []
         losses = []
@@ -202,18 +268,6 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
 
         for im in tqdm(data_loader):
             step_count += 1
-            im = im.float().to(device)
-
-            # im is (B, 5, 2, 512, 512) -> take the mean of two channels
-            # (nbatches, ninstruments, nchannels, T, nfeatures)
-            im = im.mean(dim=2)
-
-            inputs = im[:, :-1]  # (B, 4, 512, 512)
-            target = im[:, -1]  # (B, 512, 512)
-
-            with autocast('cuda'):
-                model_output = model(inputs)
-            output, _, quantize_losses = model_output
 
             # Save the model
             if step_count % model_save_steps == 0:
@@ -222,35 +276,30 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                 torch.save(model.state_dict(), model_save_path)
                 torch.save(discriminator.state_dict(), disc_save_path)
 
-            ######### Optimize Generator ##########
-            # L2 Loss
-            with autocast('cuda'):
-                recon_loss = reconstruction_loss(output, target)
-            recon_losses.append(recon_loss.item())
-            recon_loss = recon_loss / acc_steps
-            g_loss: torch.Tensor = (
-                recon_loss +
-                (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
-                (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps)
+            output, target, losses = get_loss(
+                im,
+                model,
+                train_config,
+                reconstruction_loss,
+                perceptual_loss,
+                disc_loss,
+                discriminator if step_count > disc_step_start else None
             )
-            codebook_losses.append(train_config['codebook_weight'] * quantize_losses['codebook_loss'].item())
 
-            # Adversarial loss only if disc_step_start steps passed
-            if step_count > disc_step_start:
-                disc_fake_pred: Tensor = discriminator(output)
-                if train_config['disc_loss'] == 'wasserstein':
-                    disc_fake_loss = disc_fake_pred
-                else:
-                    disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
-                gen_losses.append(train_config['disc_weight'] * disc_fake_loss.item())
-                g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
+            ######### Optimize Generator ##########
+            recon_losses.append(losses['recon_loss'].item())
+            codebook_losses.append(losses['codebook_loss'].item() * train_config['codebook_weight'])
+            perceptual_losses.append(losses['lpips_loss'].item())
+            commit_losses.append(losses['commitment_loss'].item() * train_config['commitment_beta'])
+            gen_losses.append(losses['disc_fake_loss'].item() * train_config['disc_weight'])
 
-            # Perceptual Loss
-            lpips_loss = torch.mean(perceptual_loss(output, target, normalize=True))
-            perceptual_losses.append(train_config['perceptual_weight'] * lpips_loss.item())
-            g_loss += train_config['perceptual_weight'] * lpips_loss / acc_steps
-
-            losses.append(g_loss.item())
+            g_loss = (
+                losses['recon_loss'] +
+                losses['codebook_loss'] * train_config['codebook_weight'] +
+                losses['commitment_loss'] * train_config['commitment_beta'] +
+                losses['lpips_loss'] * train_config['perceptual_weight'] +
+                losses['disc_fake_loss'] * train_config['disc_weight']
+            ) / acc_steps
             accelerator.backward(g_loss)
             #####################################
 
@@ -260,7 +309,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                 for param in discriminator.parameters():
                     param.requires_grad = True
 
-                disc_fake_pred: Tensor = discriminator(output[:, None]).squeeze(1)  # (B, 4)
+                disc_fake_pred: Tensor = discriminator(output[:, None].detach()).squeeze(1)  # (B, 4)
                 disc_real_pred: Tensor = discriminator(target[:, None]).squeeze(1)  # (B, 4)
                 if train_config['disc_loss'] == 'wasserstein':
                     disc_loss_ = (disc_real_pred - disc_fake_pred).mean()
@@ -294,7 +343,8 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                 "Perceptual Loss": perceptual_losses[-1],
                 "Codebook Loss": codebook_losses[-1],
                 "Generator Loss": gen_losses[-1] if gen_losses else 0,
-                "Discriminator Loss": disc_losses[-1] if disc_losses else 0
+                "Discriminator Loss": disc_losses[-1] if disc_losses else 0,
+                "Commitment Loss": commit_losses[-1]
             }, step=step_count)
 
             ########### Perform Validation #############
@@ -305,30 +355,30 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                     val_recon_losses = []
                     val_perceptual_losses = []
                     val_codebook_losses = []
+                    val_commit_losses = []
                     for val_im in tqdm(val_data_loader, f"Performing validation (step={step_count})", total=min(val_count, len(val_data_loader))):
                         val_count_ += 1
                         if val_count_ > val_count:
                             break
-                        val_im = val_im.float().to(device).mean(dim=2)
-                        val_inputs = val_im[:, :-1]
-                        val_target = val_im[:, -1]
-                        del val_im
-
-                        val_model_output = model(val_inputs)
-                        val_output, _, val_quantize_losses = val_model_output
-
-                        val_recon_loss = reconstruction_loss(val_output, val_target)
-                        val_recon_losses.append(val_recon_loss.item())
-
-                        val_lpips_loss = torch.mean(perceptual_loss(val_output, val_target, normalize=True))
-                        val_perceptual_losses.append(val_lpips_loss.item())
-
-                        val_codebook_losses.append(val_quantize_losses['codebook_loss'].item())
+                        output, target, val_losses = get_loss(
+                            val_im,
+                            model,
+                            train_config,
+                            reconstruction_loss,
+                            perceptual_loss,
+                            disc_loss,
+                            None
+                        )
+                        val_recon_losses.append(val_losses['recon_loss'].item())
+                        val_perceptual_losses.append(val_losses['lpips_loss'].item())
+                        val_codebook_losses.append(val_losses['codebook_loss'].item())
+                        val_commit_losses.append(val_losses['commitment_loss'].item())
 
                 wandb.log({
                     "Val Reconstruction Loss": np.mean(val_recon_losses),
                     "Val Perceptual Loss": np.mean(val_perceptual_losses),
-                    "Val Codebook Loss": np.mean(val_codebook_losses)
+                    "Val Codebook Loss": np.mean(val_codebook_losses),
+                    "Val Commitment Loss": np.mean(val_commit_losses)
                 }, step=step_count)
 
                 tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
