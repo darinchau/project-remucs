@@ -43,7 +43,7 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
-def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
+def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
           dataset_params=None, train_params=None, autoencoder_params=None):
     """Retrains the discriminator. If discriminator is None, a new discriminator is created based on the PatchGAN architecture."""
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -61,20 +61,27 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
     # Check credentials first
     credentials_path = config['dataset_params']['credentials_path']
     if not os.path.exists(credentials_path):
-        print(f"Credentials file not found at {credentials_path}")
-        exit(1)
+        raise ValueError(f"Credentials file not found at {credentials_path}")
+    del credentials_path
 
     # Check cache path
     cache_dir = config['dataset_params']['cache_dir']
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
+    del cache_dir
 
     # Check lookup tables
     for split in ['train', 'val']:
         lookup_table_path = config['dataset_params'][f"{split}_lookup_table_path"]
         if not os.path.exists(lookup_table_path):
-            print(f"Lookup table not found at {lookup_table_path}")
-            exit(1)
+            raise ValueError(f"Lookup table not found at {lookup_table_path}")
+        del lookup_table_path
+
+    # Check training config
+    _available_disc_losses = ['bce', 'mse', 'wasserstein']
+    if config['train_params']['disc_loss'] not in _available_disc_losses:
+        raise ValueError(f"Discriminator loss must be one of {_available_disc_losses}")
+    del _available_disc_losses
 
     vae_config = VQVAEConfig(**config['autoencoder_params'])
 
@@ -84,13 +91,19 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
     set_seed(train_config['seed'])
 
     # Create the model and dataset #
-    model = VQVAE(im_channels=dataset_config['im_channels'], model_config=vae_config).to(device)
+    model = VQVAE(
+        im_channels_in=dataset_config['im_channels'],
+        im_channels_out=1,
+        model_config=vae_config
+    ).to(device)
     print(f"Starting from iteration {start_from_iter}")
 
+    # Count the number of parameters
     numel = 0
     for p in model.parameters():
         numel += p.numel()
     print('Total number of parameters: {}'.format(numel))
+    del numel
 
     # Create the dataset
     im_dataset = load_dataset(
@@ -128,16 +141,14 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
     val_count = dataset_config['val_count']
 
     # Create output directories
-    if not os.path.exists(base_dir):
-        os.makedirs(base_dir)
+    if not os.path.exists(output_dir):
+        os.makedirs(output_dir)
 
     num_epochs = train_config['epochs']
 
     reconstruction_loss = torch.nn.MSELoss()
     disc_loss = torch.nn.BCEWithLogitsLoss() if train_config['disc_loss'] == 'bce' else torch.nn.MSELoss()
-    perceptual_loss = load_lpips().eval().to(device)
-
-    # Freeze perceptual loss parameters
+    perceptual_loss = load_lpips(channels=1).eval().to(device)
     for param in perceptual_loss.parameters():
         param.requires_grad = False
 
@@ -152,22 +163,22 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
         model, optimizer_g, data_loader, optimizer_d
     )
 
-    disc_step_start = train_config['disc_start']
+    disc_step_start: int = train_config['disc_start']
     step_count = 0
 
     # This is for accumulating gradients incase the images are huge
     # And one cant afford higher batch sizes
     acc_steps = train_config['autoencoder_acc_steps']
-    image_save_steps = train_config['autoencoder_img_save_steps']
+    model_save_steps = train_config['autoencoder_img_save_steps']
 
     val_steps = train_config['val_steps']
 
     # Reload checkpoint
     if start_from_iter > 0:
-        model_save_path = os.path.join(base_dir, f"vqvae_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        model_save_path = os.path.join(output_dir, f"vqvae_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
         model_sd = torch.load(model_save_path)
         model.load_state_dict(model_sd)
-        disc_save_path = os.path.join(base_dir, f"discriminator_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        disc_save_path = os.path.join(output_dir, f"discriminator_{start_from_iter}_{train_config['vqvae_autoencoder_ckpt_name']}")
         disc_sd = torch.load(disc_save_path)
         discriminator.load_state_dict(disc_sd)
         step_count = start_from_iter
@@ -193,43 +204,51 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
             step_count += 1
             im = im.float().to(device)
 
-            # im is (4, 4, 2, 512, 512) -> take the mean of two channels
+            # im is (B, 5, 2, 512, 512) -> take the mean of two channels
+            # (nbatches, ninstruments, nchannels, T, nfeatures)
             im = im.mean(dim=2)
 
-            # Fetch autoencoders output(reconstructions)
+            inputs = im[:, :-1]  # (B, 4, 512, 512)
+            target = im[:, -1]  # (B, 512, 512)
+
             with autocast('cuda'):
-                model_output = model(im)
-            output, z, quantize_losses = model_output
+                model_output = model(inputs)
+            output, _, quantize_losses = model_output
 
             # Save the model
-            if step_count % image_save_steps == 0:
-                model_save_path = os.path.join(base_dir, f"vqvae_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-                disc_save_path = os.path.join(base_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+            if step_count % model_save_steps == 0:
+                model_save_path = os.path.join(output_dir, f"vqvae_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+                disc_save_path = os.path.join(output_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
                 torch.save(model.state_dict(), model_save_path)
                 torch.save(discriminator.state_dict(), disc_save_path)
 
             ######### Optimize Generator ##########
             # L2 Loss
             with autocast('cuda'):
-                recon_loss = reconstruction_loss(output, im)
+                recon_loss = reconstruction_loss(output, target)
             recon_losses.append(recon_loss.item())
             recon_loss = recon_loss / acc_steps
-            g_loss: torch.Tensor = (recon_loss +
-                                    (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
-                                    (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps))
+            g_loss: torch.Tensor = (
+                recon_loss +
+                (train_config['codebook_weight'] * quantize_losses['codebook_loss'] / acc_steps) +
+                (train_config['commitment_beta'] * quantize_losses['commitment_loss'] / acc_steps)
+            )
             codebook_losses.append(train_config['codebook_weight'] * quantize_losses['codebook_loss'].item())
 
             # Adversarial loss only if disc_step_start steps passed
             if step_count > disc_step_start:
-                disc_fake_pred: Tensor = discriminator(model_output[0])
-                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+                disc_fake_pred: Tensor = discriminator(output)
+                if train_config['disc_loss'] == 'wasserstein':
+                    disc_fake_loss = disc_fake_pred
+                else:
+                    disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 gen_losses.append(train_config['disc_weight'] * disc_fake_loss.item())
                 g_loss += train_config['disc_weight'] * disc_fake_loss / acc_steps
 
             # Perceptual Loss
-            lpips_loss = torch.mean(perceptual_loss(output, im, normalize=True))
+            lpips_loss = torch.mean(perceptual_loss(output, target, normalize=True))
             perceptual_losses.append(train_config['perceptual_weight'] * lpips_loss.item())
-            g_loss += train_config['perceptual_weight']*lpips_loss / acc_steps
+            g_loss += train_config['perceptual_weight'] * lpips_loss / acc_steps
 
             losses.append(g_loss.item())
             accelerator.backward(g_loss)
@@ -237,18 +256,33 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
 
             ######### Optimize Discriminator #######
             if step_count > disc_step_start:
-                fake = output
-                disc_fake_pred = discriminator(fake.detach())
-                disc_real_pred = discriminator(im)
-                disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
-                disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
-                disc_loss_ = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
-                disc_losses.append(disc_loss_.item())
-                disc_loss_ = disc_loss_ / acc_steps
+                # Enable grad for discriminator
+                for param in discriminator.parameters():
+                    param.requires_grad = True
+
+                disc_fake_pred = discriminator(output.detach())
+                disc_real_pred = discriminator(target)
+                if train_config['disc_loss'] == 'wasserstein':
+                    disc_loss_ = disc_real_pred.mean() - disc_fake_pred.mean()
+                    lip_est = (disc_real_pred - disc_fake_pred).abs() / (((output.detach() - target) ** 2).sum(1) ** 0.5 + 1e-8)
+                    lip_loss = train_config['wasserstein_regularizer'] * ((1. - lip_est) ** 2).mean(0).view(1)
+                    disc_loss_ += lip_loss
+                    disc_losses.append(disc_loss_.item())
+                    disc_loss_ = disc_loss_ / acc_steps
+                else:
+                    disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
+                    disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
+                    disc_loss_: Tensor = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
+                    disc_losses.append(disc_loss_.item())
+                    disc_loss_ = disc_loss_ / acc_steps
                 accelerator.backward(disc_loss_)
                 if step_count % acc_steps == 0:
                     optimizer_d.step()
                     optimizer_d.zero_grad()
+
+                # Disable grad for discriminator
+                for param in discriminator.parameters():
+                    param.requires_grad = False
             #####################################
 
             if step_count % acc_steps == 0:
@@ -277,13 +311,17 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
                         if val_count_ > val_count:
                             break
                         val_im = val_im.float().to(device).mean(dim=2)
-                        val_model_output = model(val_im)
+                        val_inputs = val_im[:, :-1]
+                        val_target = val_im[:, -1]
+                        del val_im
+
+                        val_model_output = model(val_inputs)
                         val_output, _, val_quantize_losses = val_model_output
 
-                        val_recon_loss = reconstruction_loss(val_output, val_im)
+                        val_recon_loss = reconstruction_loss(val_output, val_target)
                         val_recon_losses.append(val_recon_loss.item())
 
-                        val_lpips_loss = torch.mean(perceptual_loss(val_output, val_im))
+                        val_lpips_loss = torch.mean(perceptual_loss(val_output, val_target, normalize=True))
                         val_perceptual_losses.append(val_lpips_loss.item())
 
                         val_codebook_losses.append(val_quantize_losses['codebook_loss'].item())
@@ -319,8 +357,8 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
                          np.mean(perceptual_losses),
                          np.mean(codebook_losses)))
 
-        model_save_path = os.path.join(base_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-        disc_save_path = os.path.join(base_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        model_save_path = os.path.join(output_dir, f"vqvae_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+        disc_save_path = os.path.join(output_dir, f"discriminator_epoch_{epoch_idx}_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
         torch.save(model.state_dict(), model_save_path)
         torch.save(discriminator.state_dict(), disc_save_path)
 

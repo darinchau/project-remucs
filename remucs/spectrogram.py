@@ -359,7 +359,7 @@ class SpectrogramDataset(Dataset):
 
     load_first_n can be set to load only n files. If set to -1, all files are loaded.
 
-    This implicitly assumes (512, 512) resolution and VDIB parts."""
+    This implicitly assumes (512, 512) resolution and VDIBN parts."""
 
     def __init__(self, dataset_dir: str, nbars: int = 4, num_workers: int = 4, load_first_n: int = -1, lookup_table_path: str | None = None):
         def load(path: str, bars: list[tuple[PartIDType, int]] | None = None):
@@ -416,6 +416,8 @@ class SpectrogramDatasetFromCloud(Dataset):
     - Default objects are present in case of error. This is done using the test specs
     - default_specs_dir is the directory containing the default spectrograms
     - Implements a LRU cache to store the spectrograms in memory
+
+    Expect the output shape to be (5, 2, 512, 512) for VDIBN parts.
     """
 
     def __init__(self, lookup_table_path: str, default_specs: SpectrogramDataset,
@@ -553,22 +555,25 @@ def get_valid_bar_numbers(spectrograms: list[tuple[PartIDType, int]], nbars: int
     return valids
 
 
-def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str) -> torch.Tensor:
-    """Processes the spectrogram data from a SpectrogramCollection object into a training object"""
+def process_spectrogram(s: SpectrogramCollection, bar: int, nbars: int, path: str = "") -> torch.Tensor:
+    """Processes the spectrogram data from a SpectrogramCollection object into a training object. The tensor has values between 0 and 1."""
     tensors = []
-    for part in "VDIB":
+    if path:
+        path = " in " + path
+    for part in "VDIBN":
         # Spectrogram is in CHW format
         # Where H is the time axis. Need concat along time
-        assert part in ("V", "D", "I", "B")  # To pass the typechecker
+        assert part in ("V", "D", "I", "B", "N")  # To pass the typechecker
         specs = [s.get_spectrogram(part, i) for i in range(bar, bar + nbars)]
         if not all(spec is not None for spec in specs):
-            raise ValueError(f"Missing spectrogram for {part} in {path} at bar {bar}")
+            raise ValueError(f"Missing spectrogram for {part}{path} at bar {bar}")
         if not all(spec.shape == (2, 128, 512) for spec in specs):  # type: ignore
-            raise ValueError(f"Invalid shape for spectrogram for {part} in {path} at bar {bar}")
+            raise ValueError(f"Invalid shape for spectrogram for {part}{path} at bar {bar}")
         data = torch.cat(specs, dim=1)  # type: ignore
         tensors.append(data)
     data = torch.stack(tensors)
-    # Return shape: 4, 2, H, W (should be 512, 512)
+    # Return shape: 5, 2, T, F (should be 512, 512)
+    assert data.shape == (5, 2, 512, 512), f"Expected shape (5, 2, 512, 512), got {data.shape}"
     return data
 
 

@@ -62,18 +62,18 @@ class vgg16(torch.nn.Module):
 # Learned perceptual metric
 
 
-class LPIPS(nn.Module):
+class LPIPS4(nn.Module):
     """ Learned Perceptual Image Patch Similarity (LPIPS) metric.
 
       forward:
-       - in0, in1: Tensors of shape (N, C, H, W) (images should be in 0-1 range)
+       - in0, in1: Tensors of shape (N, 4, H, W) (images should be in 0-1 range)
        - normalize: if True, will normalize the input to [-1, 1] range
 
        returns:
        - d: (N, ) Tensor of distances between the image pairs"""
 
     def __init__(self, means: list[float], stds: list[float], use_dropout=True):
-        super(LPIPS, self).__init__()
+        super(LPIPS4, self).__init__()
 
         # Instantiate vgg model
         self.chns = [64, 128, 256, 512, 512]
@@ -101,7 +101,7 @@ class LPIPS(nn.Module):
         self.register_buffer('mean', torch.tensor(means))
         self.register_buffer('std', torch.tensor(stds))
 
-    def forward(self, x0, x1, normalize=False):
+    def forward(self, x0, x1, normalize=True):
         # Scale the inputs to -1 to +1 range if needed
         # turn on this flag if input is [0,1] so it can be adjusted to [-1, +1]
         if normalize:
@@ -150,6 +150,84 @@ class LPIPS(nn.Module):
         return val
 
 
+class LPIPS1(nn.Module):
+    """ Learned Perceptual Image Patch Similarity (LPIPS) metric.
+
+      forward:
+       - in0, in1: Tensors of shape (N, H, W) (images should be in 0-1 range)
+       - normalize: if True, will normalize the input to [-1, 1] range
+
+       returns:
+       - d: (N, ) Tensor of distances between the image pairs"""
+
+    def __init__(self, means: float, stds: float, use_dropout=True):
+        super(LPIPS1, self).__init__()
+
+        # Instantiate vgg model
+        self.chns = [64, 128, 256, 512, 512]
+        self.L = len(self.chns)
+        self.net = vgg16(pretrained=True, requires_grad=False)
+
+        # Add 1x1 convolutional Layers
+        self.lin0 = NetLinLayer(self.chns[0], use_dropout=use_dropout)
+        self.lin1 = NetLinLayer(self.chns[1], use_dropout=use_dropout)
+        self.lin2 = NetLinLayer(self.chns[2], use_dropout=use_dropout)
+        self.lin3 = NetLinLayer(self.chns[3], use_dropout=use_dropout)
+        self.lin4 = NetLinLayer(self.chns[4], use_dropout=use_dropout)
+        self.lins = [self.lin0, self.lin1, self.lin2, self.lin3, self.lin4]
+        self.lins = nn.ModuleList(self.lins)
+
+        # Load the weights of trained LPIPS model
+        print('Loading model from: %s' % MODEL_PATH)
+        self.load_state_dict(torch.load(MODEL_PATH, map_location=device), strict=False)
+
+        # Freeze all parameters
+        self.eval()
+        for param in self.parameters():
+            param.requires_grad = False
+
+        self.mean = means
+        self.std = stds
+
+    def forward(self, x0, x1, normalize=True):
+        # Scale the inputs to -1 to +1 range if needed
+        # turn on this flag if input is [0,1] so it can be adjusted to [-1, +1]
+        if normalize:
+            x0 = 2 * x0 - 1
+            x1 = 2 * x1 - 1
+
+        # A quick hacky way to get around the VGG network requirements of having 3 channels
+        out = None
+        in0 = (x0 - self.mean) / self.std
+        in1 = (x1 - self.mean) / self.std
+        in0 = torch.stack([in0, in0, in0], dim=1)
+        in1 = torch.stack([in1, in1, in1], dim=1)
+        d = self.forward_single(in0, in1)
+
+        return d
+
+    def forward_single(self, in0, in1):
+        # Get VGG outputs for image0 and image1
+        outs0 = self.net.forward(in0)
+        outs1 = self.net.forward(in1)
+        feats0, feats1, diffs = {}, {}, {}
+
+        # Compute Square of Difference for each layer output
+        for kk in range(self.L):
+            feats0[kk], feats1[kk] = torch.nn.functional.normalize(outs0[kk], dim=1), torch.nn.functional.normalize(outs1[kk])
+            diffs[kk] = (feats0[kk] - feats1[kk]) ** 2
+
+        # 1x1 convolution followed by spatial average on the square differences
+        res = [spatial_average(self.lins[kk](diffs[kk]), keepdim=True) for kk in range(self.L)]
+        val = 0
+
+        # Aggregate the results of each layer
+        for l in range(self.L):
+            val += res[l]
+
+        return val
+
+
 class NetLinLayer(nn.Module):
     ''' A single linear layer which does a 1x1 conv '''
 
@@ -165,9 +243,16 @@ class NetLinLayer(nn.Module):
         return out
 
 
-def load_lpips(mean: tuple[float, ...] = (0.1885, 0.1751, 0.1698, 0.0800), std: tuple[float, ...] = (0.1164, 0.1066, 0.1065, 0.0672), use_dropout: bool = True) -> LPIPS:
+def load_lpips(channels: int, mean: tuple[float, ...] = (0.1885, 0.1751, 0.1698, 0.0800), std: tuple[float, ...] = (0.1164, 0.1066, 0.1065, 0.0672), use_dropout: bool = True) -> LPIPS1 | LPIPS4:
     """ Load the LPIPS model with the given means and stds. The default is calculated over the whole training + val set """
-    return LPIPS(
+    assert channels in [1, 4], "Only 1 or 4 channels are supported"
+    if channels == 1:
+        return LPIPS1(
+            means=sum(mean) / len(mean),
+            stds=sum(std) / len(std),
+            use_dropout=use_dropout
+        )
+    return LPIPS4(
         means=list(mean),
         stds=list(std),
         use_dropout=use_dropout

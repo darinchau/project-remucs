@@ -309,7 +309,7 @@ class VQVAEConfig:
 
 
 class VQVAE(nn.Module):
-    def __init__(self, im_channels, model_config: VQVAEConfig):
+    def __init__(self, im_channels_in: int, im_channels_out: int, model_config: VQVAEConfig):
         super().__init__()
         self.down_channels = model_config.down_channels
         self.mid_channels = model_config.mid_channels
@@ -338,7 +338,7 @@ class VQVAE(nn.Module):
         self.up_sample = list(reversed(self.down_sample))
 
         ##################### Encoder ######################
-        self.encoder_conv_in = nn.Conv2d(im_channels, self.down_channels[0], kernel_size=3, padding=(1, 1))
+        self.encoder_conv_in = nn.Conv2d(im_channels_in, self.down_channels[0], kernel_size=3, padding=(1, 1))
 
         # Downblock + Midblock
         self.encoder_layers = nn.ModuleList([])
@@ -394,7 +394,7 @@ class VQVAE(nn.Module):
                                                use_gradient_checkpointing=self.gradient_checkpointing))
 
         self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
-        self.decoder_conv_out = nn.Conv2d(self.down_channels[0], im_channels, kernel_size=3, padding=1)
+        self.decoder_conv_out = nn.Conv2d(self.down_channels[0], im_channels_out, kernel_size=3, padding=1)
 
     def quantize(self, x):
         B, C, H, W = x.shape
@@ -462,9 +462,6 @@ class VQVAE(nn.Module):
         z, quant_losses = self.encode(x)
         out = self.decode(z)
         return out, z, quant_losses
-
-
-TARGET_FEATURES = 512
 
 
 class SpectrogramPatchModel(nn.Module):

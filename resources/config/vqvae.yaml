@@ -38,13 +38,14 @@ train_params:
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
   perceptual_weight: 1
+  wasserstein_regularizer: 0.1 # Regularizer for the wasserstein loss
   epochs: 2
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
   vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
-  run_name: "vqvae-training-4"
+  run_name: "vqvae-training-5"
   mel_weight_recon_loss: False # If True, use mel filter bins to reweight the reconstruction loss
-  disc_loss: "bce" # "bce" or "mse"
+  disc_loss: "wasserstein" # "bce", "mse", or "wasserstein"
   val_steps: 2048
