@@ -242,10 +242,10 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
                 disc_real_pred = discriminator(im)
                 disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
-                disc_loss = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
-                disc_losses.append(disc_loss.item())
-                disc_loss = disc_loss / acc_steps
-                accelerator.backward(disc_loss)
+                disc_loss_ = train_config['disc_weight'] * (disc_fake_loss + disc_real_loss) / 2
+                disc_losses.append(disc_loss_.item())
+                disc_loss_ = disc_loss_ / acc_steps
+                accelerator.backward(disc_loss_)
                 if step_count % acc_steps == 0:
                     optimizer_d.step()
                     optimizer_d.zero_grad()
@@ -331,7 +331,7 @@ def train(config_path: str, base_dir: str, *, start_from_iter: int = 0,
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
     parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
-    parser.add_argument('--output_dir', dest='output_dir', type=str, default='resources/models/vqvae')
-    parser.add_argument('--start_iter', dest='start_iter', type=int, default=0)
+    parser.add_argument('--output-dir', dest='output_dir', type=str, default='resources/models/vqvae')
+    parser.add_argument('--start-iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
     train(args.config_path, args.output_dir, start_from_iter=args.start_iter)
