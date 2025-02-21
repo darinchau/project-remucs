@@ -344,7 +344,13 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                 "Codebook Loss": codebook_losses[-1],
                 "Generator Loss": gen_losses[-1] if gen_losses else 0,
                 "Discriminator Loss": disc_losses[-1] if disc_losses else 0,
-                "Commitment Loss": commit_losses[-1]
+                "Commitment Loss": commit_losses[-1],
+                "log(Reconstruction Loss)": np.log(recon_losses[-1]),
+                "log(Perceptual Loss)": np.log(perceptual_losses[-1]),
+                "log(Codebook Loss)": np.log(codebook_losses[-1]),
+                "log(Generator Loss)": np.log(gen_losses[-1]) if gen_losses else 0,
+                "log(Discriminator Loss)": np.log(disc_losses[-1]) if disc_losses else 0,
+                "log(Commitment Loss)": np.log(commit_losses[-1])
             }, step=step_count)
 
             ########### Perform Validation #############
@@ -378,7 +384,11 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                     "Val Reconstruction Loss": np.mean(val_recon_losses),
                     "Val Perceptual Loss": np.mean(val_perceptual_losses),
                     "Val Codebook Loss": np.mean(val_codebook_losses),
-                    "Val Commitment Loss": np.mean(val_commit_losses)
+                    "Val Commitment Loss": np.mean(val_commit_losses),
+                    "log(Val Reconstruction Loss)": np.log(np.mean(val_recon_losses)),
+                    "log(Val Perceptual Loss)": np.log(np.mean(val_perceptual_losses)),
+                    "log(Val Codebook Loss)": np.log(np.mean(val_codebook_losses)),
+                    "log(Val Commitment Loss)": np.log(np.mean(val_commit_losses))
                 }, step=step_count)
 
                 tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
