@@ -11,7 +11,7 @@ dataset_params:
   credentials_path: "./resources/key.json"
   bucket_name: "project-remucs-specs"
   cache_dir: "./resources/spec_cache"
-  val_count: 200 # Number of validation samples
+  val_count: 100 # Number of validation samples
   backup_dataset_first_n_train: 10
   backup_dataset_first_n_val: 3
 
@@ -40,6 +40,7 @@ train_params:
   perceptual_weight: 1
   wasserstein_regularizer: 0.1 # Regularizer for the wasserstein loss
   epochs: 2
+  max_discr_to_gen_ratio: 8 # Maximum ratio of discriminator to generator steps
   autoencoder_lr: 0.00001
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
