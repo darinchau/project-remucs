@@ -335,7 +335,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
             disc_real_pred: Tensor = discriminator(target[:, None])
             if train_config['disc_loss'] == 'wasserstein':
                 # Implements WGAN-GP with Lipschitz penalty
-                disc_loss_ = compute_gradient_penalty(discriminator, output[:, None], target[:, None], train_config['lambda_gp'])
+                disc_loss_ = compute_gradient_penalty(discriminator, output[:, None], target[:, None], train_config['wasserstein_regularizer'])
             else:
                 disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))
