@@ -17,7 +17,7 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.model.vae import VQVAE, VQVAEConfig
-from remucs.model.vae import SpectrogramPatchModel as Discriminator
+from remucs.model.discriminator import ResnetDiscriminator as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.spectrogram import load_dataset
 import torch.nn.functional as F
@@ -95,8 +95,8 @@ def get_loss(
     output, _, quantize_losses = model_output
     output = output.squeeze(1)
 
-    assert output.shape == (batch, 512, 512)
-    assert target.shape == (batch, 512, 512)
+    # assert output.shape == (batch, 512, 512)
+    # assert target.shape == (batch, 512, 512)
 
     losses = {}
 
@@ -136,6 +136,30 @@ def cycle_dl(dl):
     while True:
         for x in dl:
             yield x
+
+
+def compute_gradient_penalty(discriminator, x_fake, x_real, lambda_gp):
+    batch_size = x_real.size(0)
+    device = x_real.device
+    d_fake = discriminator(x_fake)
+    d_real = discriminator(x_real)
+    epsilon = torch.rand(batch_size, 1).expand_as(x_real).to(device)
+    x_interpolated = epsilon * x_real + (1 - epsilon) * x_fake
+    x_interpolated = x_interpolated.requires_grad_(True)
+    d_interpolated = discriminator(x_interpolated)
+    grad_outputs = torch.ones(d_interpolated.size(), requires_grad=False).to(device)
+    grads = torch.autograd.grad(
+        outputs=d_interpolated,
+        inputs=x_interpolated,
+        grad_outputs=grad_outputs,
+        create_graph=True,
+        retain_graph=True,
+        only_inputs=True
+    )[0]
+    grad_norm = grads.norm(2, dim=1)
+    gradient_penalty = torch.mean((grad_norm - 1) ** 2)
+    loss_d = -(torch.mean(d_real) - torch.mean(d_fake)) + lambda_gp * gradient_penalty
+    return loss_d
 
 
 def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
@@ -289,7 +313,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
         optimizer_d.zero_grad()
         optimizer_g.zero_grad()
 
-        for i in range(disc_to_gen_ratio):
+        for _ in range(disc_to_gen_ratio):
             #### Optimize Discriminator ####
             for param in discriminator.parameters():
                 param.requires_grad = True
@@ -307,15 +331,11 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                     None
                 )
 
-            disc_fake_pred: Tensor = discriminator(output[:, None].detach()).squeeze(1)  # (B, 4)
-            disc_real_pred: Tensor = discriminator(target[:, None]).squeeze(1)  # (B, 4)
+            disc_fake_pred: Tensor = discriminator(output[:, None])
+            disc_real_pred: Tensor = discriminator(target[:, None])
             if train_config['disc_loss'] == 'wasserstein':
                 # Implements WGAN-GP with Lipschitz penalty
-                disc_loss_ = (disc_real_pred - disc_fake_pred).mean()
-                lip_dist = ((output.detach() - target) ** 2).sum(2).sum(1) ** 0.5 + 1e-8
-                lip_est = (disc_real_pred - disc_fake_pred).abs().mean() / lip_dist
-                lip_loss = ((1. - lip_est) ** 2).mean(0).view(())
-                disc_loss_ += lip_loss
+                disc_loss_ = compute_gradient_penalty(discriminator, output[:, None], target[:, None], train_config['lambda_gp'])
             else:
                 disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))

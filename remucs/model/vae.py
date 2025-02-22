@@ -11,28 +11,6 @@ from ..constants import TARGET_FEATURES, TARGET_SR, NFFT, SPEC_MAX_VALUE, SPEC_P
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 
 
-def get_time_embedding(time_steps: Tensor, temb_dim: int):
-    r"""
-    Convert time steps tensor into an embedding using the
-    sinusoidal time embedding formula
-    :param time_steps: 1D tensor of length batch size
-    :param temb_dim: Dimension of the embedding
-    :return: BxD embedding representation of B time steps
-    """
-    assert temb_dim % 2 == 0, "time embedding dimension must be divisible by 2"
-
-    # factor = 10000^(2i/d_model)
-    factor = 10000 ** ((torch.arange(
-        start=0, end=temb_dim // 2, dtype=torch.float32, device=time_steps.device) / (temb_dim // 2))
-    )
-
-    # pos / factor
-    # timesteps B -> B, 1 -> B, temb_dim
-    t_emb = time_steps[:, None].repeat(1, temb_dim // 2) / factor
-    t_emb = torch.cat([torch.sin(t_emb), torch.cos(t_emb)], dim=-1)
-    return t_emb
-
-
 class DownBlock(nn.Module):
     r"""
     Down conv block with attention.
@@ -462,56 +440,6 @@ class VQVAE(nn.Module):
         z, quant_losses = self.encode(x)
         out = self.decode(z)
         return out, z, quant_losses
-
-
-class SpectrogramPatchModel(nn.Module):
-    """This uses the idea of PatchGAN but changes the architecture to use Conv2d layers on each bar (4, 128, 512) patches
-
-    Assumes input is of shape (B, 4, 512, 512), outputs a tensor of shape (B, 4, 4)"""
-
-    def __init__(self, target_features: int = TARGET_FEATURES):
-        super(SpectrogramPatchModel, self).__init__()
-        # Define a simple CNN architecture for each patch
-        self.conv1 = nn.Conv2d(4, 16, kernel_size=3, padding=1)  # Output: (B, 16, 128, 512)
-        self.pool11 = nn.AdaptiveMaxPool2d((128, 256))
-        self.pool12 = nn.AdaptiveAvgPool2d((64, 256))
-        self.conv2 = nn.Conv2d(16, 32, kernel_size=3, padding=1)  # Output: (B, 32, 64, 256)
-        self.pool21 = nn.AdaptiveMaxPool2d((64, 128))
-        self.pool22 = nn.AdaptiveAvgPool2d((32, 128))
-        self.conv3 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # Output: (B, 64, 32, 128)
-        self.pool31 = nn.AdaptiveMaxPool2d((32, 32))
-        self.pool32 = nn.AdaptiveAvgPool2d((8, 32))
-        self.conv4 = nn.Conv2d(64, 128, kernel_size=3, padding=1)  # Output: (B, 128, 8, 32)
-        self.fc = nn.Conv2d(128, 4, (8, 32))  # Equivalent to FC layers over each channel
-        self.target_features = target_features
-
-    def forward(self, x: Tensor):
-        # x shape: (B, 4, 512, 512)
-        # Splitting along the T axis into 4 patches
-        patches = x.unflatten(2, (x.size(2) // 128, 128))  # Output: (B, 4, 4, 128, 512)
-
-        # Process each patch
-        batch_size, num_patches, channels, height, width = patches.size()
-        patches = patches.reshape(-1, channels, height, width)  # Flatten patches for batch processing
-
-        # Apply CNN
-        x = self.conv1(patches)
-        x = F.relu(x)
-        x = self.pool11(x)
-        x = self.pool12(x)
-        x = self.conv2(x)
-        x = F.relu(x)
-        x = self.pool21(x)
-        x = self.pool22(x)
-        x = self.conv3(x)
-        x = F.relu(x)
-        x = self.pool31(x)
-        x = self.pool32(x)
-        x = self.conv4(x)
-        x = F.relu(x)
-        x = self.fc(x)
-        x = x.view(batch_size, num_patches, channels, -1).squeeze(-1).squeeze(-1)
-        return x
 
 
 def vae_output_to_audio(images: Tensor):
