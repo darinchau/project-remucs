@@ -180,6 +180,9 @@ class ResnetDiscriminator(nn.Module):
         self.fc = spectral_norm(nn.Linear(config.down_channels[-1], 1))
 
     def forward(self, x):
+        if x.dim() == 3:
+            x = x.unsqueeze(1)
+
         # Input shape: (B, 1, 512, 512)
         x = self.initial_conv(x)  # (B, C, 512, 512)
 

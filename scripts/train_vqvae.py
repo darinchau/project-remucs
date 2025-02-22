@@ -249,7 +249,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     for param in perceptual_loss.parameters():
         param.requires_grad = False
 
-    discriminator = Discriminator().to(device)
+    discriminator = Discriminator(1, vae_config).to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
