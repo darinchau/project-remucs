@@ -32,8 +32,8 @@ autoencoder_params:
 train_params:
   seed : 1943
   num_workers_dl: 0
-  autoencoder_batch_size: 8
-  disc_start: 2048     # Start training discriminator after this many steps. Set to a very small number for testing
+  autoencoder_batch_size: 6
+  disc_start: 3     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
