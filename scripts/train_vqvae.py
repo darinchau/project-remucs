@@ -144,7 +144,6 @@ def compute_gradient_penalty(discriminator, x_fake, x_real, lambda_gp):
     assert d_real.shape == d_fake.shape == (x_real.shape[0],)
     x_fake = x_fake.squeeze(1)
     x_real = x_real.squeeze(1)
-    disc_loss_ =
     lip_dist = ((x_fake - x_real) ** 2).mean(2).mean(1) ** 0.5 + 1e-8
     lip_est = (x_fake - x_real).abs().mean() / lip_dist
     lip_loss = (1. - lip_est) ** 2
@@ -439,16 +438,6 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
             tqdm.write(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, Codebook loss: {np.mean(val_codebook_losses)}")
             model.train()
         ############################################
-
-        # End of epoch. Clean up the gradients and losses and save the model
-        optimizer_d.step()
-        optimizer_d.zero_grad()
-        optimizer_g.step()
-        optimizer_g.zero_grad()
-        model_save_path = os.path.join(output_dir, f"vqvae_epoch_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-        disc_save_path = os.path.join(output_dir, f"discriminator_epoch_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-        torch.save(model.state_dict(), model_save_path)
-        torch.save(discriminator.state_dict(), disc_save_path)
 
     wandb.finish()
     print('Done Training...')

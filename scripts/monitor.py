@@ -26,7 +26,6 @@ def main():
 
     config = read_config(config_path)
 
-    print(f"Starting with a = {a}")
     while True:
         time.sleep(10)
         if len(os.listdir(base_dir)) < FILE_LIMIT:
