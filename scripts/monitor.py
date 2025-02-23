@@ -51,7 +51,7 @@ def main():
             continue
 
         files = os.listdir(base_dir)
-        indices = [int(file.split('_')[1]) for file in files if file.startswith('vqvae')]
+        indices = [int(file.split('_')[1]) for file in files if file.startswith('vqvae') or file.startswith('discriminator')]
 
         # Delete the oldest model
         a = min(indices)
