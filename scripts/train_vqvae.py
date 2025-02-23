@@ -139,27 +139,17 @@ def cycle_dl(dl):
 
 
 def compute_gradient_penalty(discriminator, x_fake, x_real, lambda_gp):
-    batch_size = x_real.size(0)
-    device = x_real.device
-    d_fake = discriminator(x_fake)
     d_real = discriminator(x_real)
-    epsilon = torch.rand(batch_size, 1).expand_as(x_real).to(device)
-    x_interpolated = epsilon * x_real + (1 - epsilon) * x_fake
-    x_interpolated = x_interpolated.requires_grad_(True)
-    d_interpolated = discriminator(x_interpolated)
-    grad_outputs = torch.ones(d_interpolated.size(), requires_grad=False).to(device)
-    grads = torch.autograd.grad(
-        outputs=d_interpolated,
-        inputs=x_interpolated,
-        grad_outputs=grad_outputs,
-        create_graph=True,
-        retain_graph=True,
-        only_inputs=True
-    )[0]
-    grad_norm = grads.norm(2, dim=1)
-    gradient_penalty = torch.mean((grad_norm - 1) ** 2)
-    loss_d = -(torch.mean(d_real) - torch.mean(d_fake)) + lambda_gp * gradient_penalty
-    return loss_d
+    d_fake = discriminator(x_fake)
+    assert d_real.shape == d_fake.shape == (x_real.shape[0],)
+    x_fake = x_fake.squeeze(1)
+    x_real = x_real.squeeze(1)
+    disc_loss_ =
+    lip_dist = ((x_fake - x_real) ** 2).mean(2).mean(1) ** 0.5 + 1e-8
+    lip_est = (x_fake - x_real).abs().mean() / lip_dist
+    lip_loss = (1. - lip_est) ** 2
+    disc_loss_ = (d_real - d_fake) + lip_loss * lambda_gp
+    return disc_loss_
 
 
 def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
