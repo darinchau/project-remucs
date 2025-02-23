@@ -293,9 +293,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     while step_count < nbatches:
         step_count += 1
         steps_progress.update(1)
-        if len(disc_losses) > 0 and len(gen_losses) > 0 and step_count > disc_step_start:
-            disc_to_gen_ratio = int(min(max(disc_losses[-1] / gen_losses[-1], 0), max_discr_to_gen_ratio))
-        elif step_count > disc_step_start:
+        if step_count > disc_step_start:
             disc_to_gen_ratio = 1
         else:
             disc_to_gen_ratio = 0
