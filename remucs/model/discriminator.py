@@ -1,4 +1,5 @@
 # Implements and archives the various discriminator models experimented with in the training of VQVAE
+# Assuming except SpectrogramPatchModel, all other models take input (b, 512, 512) and output (b,)
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
@@ -148,11 +149,11 @@ class DiscriminatorDownBlock(nn.Module):
 
 
 class ResnetDiscriminator(nn.Module):
-    def __init__(self, in_channels: int, config: VQVAEConfig):
+    def __init__(self, config: VQVAEConfig):
         super().__init__()
         # Initial convolution
         self.initial_conv = spectral_norm(
-            nn.Conv2d(in_channels, config.down_channels[0], kernel_size=3, padding=1)
+            nn.Conv2d(1, config.down_channels[0], kernel_size=3, padding=1)
         )
 
         # Down blocks mirroring the VQVAE encoder structure
@@ -198,3 +199,58 @@ class ResnetDiscriminator(nn.Module):
         x = self.fc(x)  # (B, 1)
 
         return x.squeeze(-1)  # (B,)
+
+
+class AudioSpectrogramDiscriminator(nn.Module):
+    def __init__(self, config: VQVAEConfig):
+        super().__init__()
+
+        self.feature_extractor = nn.Sequential(
+            # Block 1: (1, 512, 512) -> (16, 256, 256)
+            nn.Conv2d(1, 16, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(16),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Block 2: (16, 256, 256) -> (32, 128, 128)
+            nn.Conv2d(16, 32, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(32),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Block 3: (32, 128, 128) -> (64, 64, 64)
+            nn.Conv2d(32, 64, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(64),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Block 4: (64, 64, 64) -> (128, 32, 32)
+            nn.Conv2d(64, 128, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(128),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Block 5: (128, 32, 32) -> (256, 16, 16)
+            nn.Conv2d(128, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+
+            # Block 6: (256, 16, 16) -> (256, 8, 8)
+            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(256),
+            nn.ReLU(),
+            nn.MaxPool2d(2),
+        )
+
+        self.classifier = nn.Sequential(
+            nn.AdaptiveAvgPool2d(1),  # Global average pooling
+            nn.Flatten(),
+            nn.Linear(256, 1)
+        )
+
+    def forward(self, x):
+        # Add channel dimension: (batch, 512, 512) -> (batch, 1, 512, 512)
+        x = x.unsqueeze(1)
+        features = self.feature_extractor(x)
+        return self.classifier(features).squeeze(-1)

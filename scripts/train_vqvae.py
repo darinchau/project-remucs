@@ -17,7 +17,7 @@ import wandb
 import pickle
 from accelerate import Accelerator
 from remucs.model.vae import VQVAE, VQVAEConfig
-from remucs.model.discriminator import ResnetDiscriminator as Discriminator
+from remucs.model.discriminator import AudioSpectrogramDiscriminator as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.spectrogram import load_dataset
 import torch.nn.functional as F
@@ -114,7 +114,7 @@ def get_loss(
     losses['commitment_loss'] = commitment_loss
 
     if discriminator is not None:
-        disc_fake_pred: Tensor = discriminator(output[:, None]) #(b,)
+        disc_fake_pred: Tensor = discriminator(output[:, None])  # (b,)
         if train_config['disc_loss'] == 'wasserstein':
             # Wasserstein WGAN increases the value of discriminator output
             disc_fake_loss = disc_fake_pred.mean()
@@ -239,7 +239,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     for param in perceptual_loss.parameters():
         param.requires_grad = False
 
-    discriminator = Discriminator(1, vae_config).to(device)
+    discriminator = Discriminator(vae_config).to(device)
 
     optimizer_d = Adam(discriminator.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
     optimizer_g = Adam(model.parameters(), lr=train_config['autoencoder_lr'], betas=(0.5, 0.999))
