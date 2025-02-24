@@ -114,7 +114,7 @@ def get_loss(
     losses['commitment_loss'] = commitment_loss
 
     if discriminator is not None:
-        disc_fake_pred: Tensor = discriminator(output[:, None])  # (b,)
+        disc_fake_pred: Tensor = discriminator(output)  # (b,)
         if train_config['disc_loss'] == 'wasserstein':
             # Wasserstein WGAN increases the value of discriminator output
             disc_fake_loss = disc_fake_pred.mean()
@@ -319,11 +319,11 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
                     None
                 )
 
-            disc_fake_pred: Tensor = discriminator(output[:, None])
-            disc_real_pred: Tensor = discriminator(target[:, None])
+            disc_fake_pred: Tensor = discriminator(output)
+            disc_real_pred: Tensor = discriminator(target)
             if train_config['disc_loss'] == 'wasserstein':
                 # Implements WGAN-GP with Lipschitz penalty
-                disc_loss_ = compute_gradient_penalty(discriminator, output[:, None], target[:, None], train_config['wasserstein_regularizer'])
+                disc_loss_ = compute_gradient_penalty(discriminator, output, target, train_config['wasserstein_regularizer'])
             else:
                 disc_fake_loss = disc_loss(disc_fake_pred, torch.zeros(disc_fake_pred.shape, device=disc_fake_pred.device))
                 disc_real_loss = disc_loss(disc_real_pred, torch.ones(disc_real_pred.shape, device=disc_real_pred.device))

@@ -32,8 +32,8 @@ autoencoder_params:
 train_params:
   seed : 1943
   num_workers_dl: 0
-  autoencoder_batch_size: 6
-  disc_start: 1024     # Start training discriminator after this many steps. Set to a very small number for testing
+  autoencoder_batch_size: 14
+  disc_start: 3     # Start training discriminator after this many steps. Set to a very small number for testing
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
@@ -45,7 +45,7 @@ train_params:
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
-  run_name: "vqvae-training-7"
+  run_name: "vqvae-training-6"
   mel_weight_recon_loss: False # If True, use mel filter bins to reweight the reconstruction loss
   disc_loss: "wasserstein" # "bce", "mse", or "wasserstein"
   val_steps: 512
