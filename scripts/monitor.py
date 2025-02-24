@@ -22,8 +22,8 @@ def read_config(config_path: str):
 
 def delete_stuff(a: int, config):
     train_config = config['train_params']
-    model_save_path = os.path.join(output_dir, f"vqvae_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
-    disc_save_path = os.path.join(output_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+    model = os.path.join(base_dir, f"vqvae_{a}_{train_config['vqvae_autoencoder_ckpt_name']}")
+    discr = os.path.join(base_dir, f"discriminator_{a}_{train_config['vqvae_autoencoder_ckpt_name']}")
 
     if os.path.isfile(discr):
         try:
