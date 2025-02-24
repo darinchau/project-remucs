@@ -21,21 +21,16 @@ def read_config(config_path: str):
 
 
 def delete_stuff(a: int, config):
-    model = os.path.join(base_dir, f"vqvae_{a}_{config['train_params']['vqvae_autoencoder_ckpt_name']}")
-    discr = os.path.join(base_dir, f"vqvae_{a}_{config['train_params']['vqvae_discriminator_ckpt_name']}")
+    train_config = config['train_params']
+    model_save_path = os.path.join(output_dir, f"vqvae_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
+    disc_save_path = os.path.join(output_dir, f"discriminator_{step_count}_{train_config['vqvae_autoencoder_ckpt_name']}")
 
-    if os.path.isfile(model) and os.path.isfile(discr):
-        try:
-            os.remove(model)
-            os.remove(discr)
-        except Exception as e:
-            print(e)
-    elif os.path.isfile(discr):
+    if os.path.isfile(discr):
         try:
             os.remove(discr)
         except Exception as e:
             print(e)
-    elif os.path.isfile(model):
+    if os.path.isfile(model):
         try:
             os.remove(model)
         except Exception as e:

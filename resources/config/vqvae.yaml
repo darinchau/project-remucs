@@ -45,8 +45,7 @@ train_params:
   autoencoder_acc_steps: 16
   autoencoder_img_save_steps: 512
   vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
-  vqvae_discriminator_ckpt_name: 'vqvae_discriminator_ckpt.pth'
-  run_name: "vqvae-training-6"
+  run_name: "vqvae-training-7"
   mel_weight_recon_loss: False # If True, use mel filter bins to reweight the reconstruction loss
   disc_loss: "wasserstein" # "bce", "mse", or "wasserstein"
   val_steps: 512
