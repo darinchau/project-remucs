@@ -540,9 +540,8 @@ class VAE(nn.Module):
         out = self.encoder_conv_out(out)
         out = self.pre_quant_conv(out)
         mean, logvar = torch.chunk(out, 2, dim=1)
-        std = torch.exp(0.5 * logvar)
-        sample = mean + std * torch.randn(mean.shape).to(device=x.device)
-        return sample, out
+        kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
+        return mean, logvar, kl_loss
 
     def decode(self, z):
         out = z
@@ -559,9 +558,10 @@ class VAE(nn.Module):
         return out
 
     def forward(self, x):
-        z, encoder_output = self.encode(x)
+        mean, logvar, kl_loss = self.encode(x)
+        z = mean + torch.exp(0.5 * logvar) * torch.randn(mean.shape).to(device=x.device)
         out = self.decode(z)
-        return out, encoder_output
+        return out, z, mean, logvar, kl_loss
 
 
 def vae_output_to_audio(images: Tensor):

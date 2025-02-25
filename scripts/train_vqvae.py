@@ -16,7 +16,7 @@ from torch.amp.autocast_mode import autocast
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model.vae import VQVAE, VAEConfig
+from remucs.model.vae import VQVAE, VAEConfig, VAE
 from remucs.model.discriminator import AudioSpectrogramDiscriminator as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.spectrogram import load_dataset
@@ -71,7 +71,7 @@ def sanity_check(config: dict):
 
 def get_loss(
     im: Tensor,
-    model: VQVAE,
+    model: VQVAE | VAE,
     train_config: dict,
     reconstruction_loss: nn.Module,
     perceptual_loss: nn.Module,
@@ -89,16 +89,24 @@ def get_loss(
     target = im[:, -1]  # (B, 512, 512)
 
     batch = inputs.shape[0]
+    losses = {}
 
-    with autocast('cuda'):
-        model_output = model(inputs)
-    output, _, quantize_losses = model_output
-    output = output.squeeze(1)
+    if isinstance(model, VQVAE):
+        with autocast('cuda'):
+            output, _, quantize_losses = model(inputs)
+        output = output.squeeze(1)
+        codebook_loss = quantize_losses['codebook_loss']
+        commitment_loss = quantize_losses['commitment_loss']
+        losses['codebook_loss'] = codebook_loss
+        losses['commitment_loss'] = commitment_loss
+    else:
+        with autocast('cuda'):
+            out, z, mean, logvar, kl_loss = model(inputs)
+        output = out.squeeze(1)
+        losses['kl_loss'] = kl_loss
 
     # assert output.shape == (batch, 512, 512)
     # assert target.shape == (batch, 512, 512)
-
-    losses = {}
 
     if not calculate_losses:
         return output, target, losses
@@ -107,11 +115,7 @@ def get_loss(
     # L2 Loss
     with autocast('cuda'):
         recon_loss = reconstruction_loss(output, target)
-    codebook_loss = quantize_losses['codebook_loss']
-    commitment_loss = quantize_losses['commitment_loss']
     losses['recon_loss'] = recon_loss
-    losses['codebook_loss'] = codebook_loss
-    losses['commitment_loss'] = commitment_loss
 
     if discriminator is not None:
         disc_fake_pred: Tensor = discriminator(output)  # (b,)
@@ -178,7 +182,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     set_seed(train_config['seed'])
 
     # Create the model and dataset #
-    model: VQVAE = VQVAE(
+    model: VAE = VAE(
         im_channels_in=dataset_config['im_channels'],
         im_channels_out=1,
         model_config=vae_config
@@ -279,13 +283,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
         config=config
     )
 
-    recon_losses = []
-    codebook_losses = []
-    perceptual_losses = []
-    commit_losses = []
     disc_losses = []
-    gen_losses = []
-    losses = []
 
     progress = tqdm(desc='Training (nsteps)')
     steps_progress = tqdm(desc='Training (noptims)', total=nbatches)
@@ -359,19 +357,21 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
         )
 
         ######### Optimize Generator ##########
-        recon_losses.append(losses['recon_loss'].item())
-        codebook_losses.append(losses['codebook_loss'].item() * train_config['codebook_weight'])
-        perceptual_losses.append(losses['lpips_loss'].item())
-        commit_losses.append(losses['commitment_loss'].item() * train_config['commitment_beta'])
-        gen_losses.append(losses['disc_fake_loss'].item() * train_config['disc_weight'])
-
-        g_loss = (
-            losses['recon_loss'] +
-            losses['codebook_loss'] * train_config['codebook_weight'] +
-            losses['commitment_loss'] * train_config['commitment_beta'] +
-            losses['lpips_loss'] * train_config['perceptual_weight'] +
-            losses['disc_fake_loss'] * train_config['disc_weight']
-        ) / acc_steps
+        if isinstance(model, VQVAE):
+            g_loss = (
+                losses['recon_loss'] +
+                losses['codebook_loss'] * train_config['codebook_weight'] +
+                losses['commitment_loss'] * train_config['commitment_beta'] +
+                losses['lpips_loss'] * train_config['perceptual_weight'] +
+                losses['disc_fake_loss'] * train_config['disc_weight']
+            ) / acc_steps
+        else:
+            g_loss = (
+                losses['recon_loss'] +
+                losses['kl_loss'] * train_config['kl_weight'] +
+                losses['lpips_loss'] * train_config['perceptual_weight'] +
+                losses['disc_fake_loss'] * train_config['disc_weight']
+            ) / acc_steps
         accelerator.backward(g_loss)
         #####################################
 
@@ -379,16 +379,9 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
             optimizer_g.step()
             optimizer_g.zero_grad()
 
-        # Log losses
-        wandb.log({
-            "Reconstruction Loss": recon_losses[-1],
-            "Perceptual Loss": perceptual_losses[-1],
-            "Codebook Loss": codebook_losses[-1],
-            "Generator Loss": gen_losses[-1] if gen_losses else 0,
-            "Discriminator Loss": disc_losses[-1] if disc_losses else 0,
-            "Commitment Loss": commit_losses[-1],
-            "Discriminator steps": disc_to_gen_ratio
-        }, step=step_count)
+        losses_log = {loss.replace("_", " ").capitalize(): losses[loss] for loss in losses}
+        losses_log['Discriminator steps'] = disc_to_gen_ratio
+        wandb.log(losses_log, step=step_count)
 
         ########### Perform Validation #############
         val_count_ = 0

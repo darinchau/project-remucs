@@ -37,6 +37,7 @@ train_params:
   disc_weight: 0.5      # Weight of discriminator loss
   codebook_weight: 1    # Weight of codebook loss
   commitment_beta: 0.2
+  kl_weight: 0.5
   perceptual_weight: 1
   wasserstein_regularizer: 0.1 # Regularizer for the wasserstein loss
   epochs: 2
