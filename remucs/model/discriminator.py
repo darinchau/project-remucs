@@ -236,11 +236,11 @@ class AudioSpectrogramDiscriminator(nn.Module):
             nn.ReLU(),
             nn.MaxPool2d(2),
 
-            # Block 6: (256, 16, 16) -> (256, 8, 8)
-            nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(256),
-            nn.ReLU(),
-            nn.MaxPool2d(2),
+            # # Block 6: (256, 16, 16) -> (256, 8, 8)
+            # nn.Conv2d(256, 256, kernel_size=3, padding=1, bias=False),
+            # nn.BatchNorm2d(256),
+            # nn.ReLU(),
+            # nn.MaxPool2d(2),
         )
 
         self.classifier = nn.Sequential(
