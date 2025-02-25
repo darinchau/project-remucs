@@ -33,7 +33,7 @@ from diffusers.utils import check_min_version
 from diffusers.utils.import_utils import is_xformers_available
 from diffusers.utils.torch_utils import randn_tensor
 
-from remucs.model.vae import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VAEConfig
 from remucs.model.unet import PromptEmbed
 from remucs.spectrogram import SpectrogramDataset, SpectrogramDatasetFromCloud
 
@@ -120,7 +120,7 @@ def load_vae(args_path: str, args: TrainingConfig, device):
 
     vae_config_path = os.path.join(os.path.dirname(args_path), "vqvae.yaml")
     config = read_config(vae_config_path)
-    vae_config = VQVAEConfig(**config['autoencoder_params'])
+    vae_config = VAEConfig(**config['autoencoder_params'])
     model = VQVAE(im_channels=config['dataset_params']['im_channels'], model_config=vae_config).to(device)
     sd = torch.load(args.vae_ckpt_path, map_location=device)
     model.load_state_dict(sd)

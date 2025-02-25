@@ -3,7 +3,7 @@
 import torch
 import torch.nn as nn
 from torch.nn.utils import spectral_norm
-from .vae import VQVAEConfig
+from .vae import VAEConfig
 from ..constants import TARGET_FEATURES
 import torch.nn.functional as F
 from torch import Tensor
@@ -149,7 +149,7 @@ class DiscriminatorDownBlock(nn.Module):
 
 
 class ResnetDiscriminator(nn.Module):
-    def __init__(self, config: VQVAEConfig):
+    def __init__(self, config: VAEConfig):
         super().__init__()
         # Initial convolution
         self.initial_conv = spectral_norm(
@@ -202,7 +202,7 @@ class ResnetDiscriminator(nn.Module):
 
 
 class AudioSpectrogramDiscriminator(nn.Module):
-    def __init__(self, config: VQVAEConfig):
+    def __init__(self, config: VAEConfig):
         super().__init__()
 
         self.feature_extractor = nn.Sequential(

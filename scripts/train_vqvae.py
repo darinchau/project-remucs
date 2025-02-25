@@ -16,7 +16,7 @@ from torch.amp.autocast_mode import autocast
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model.vae import VQVAE, VQVAEConfig
+from remucs.model.vae import VQVAE, VAEConfig
 from remucs.model.discriminator import AudioSpectrogramDiscriminator as Discriminator
 from remucs.model.lpips import load_lpips
 from remucs.spectrogram import load_dataset
@@ -170,7 +170,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     # Sanity checks
     sanity_check(config)
 
-    vae_config = VQVAEConfig(**config['autoencoder_params'])
+    vae_config = VAEConfig(**config['autoencoder_params'])
 
     dataset_config = config['dataset_params']
     train_config = config['train_params']
