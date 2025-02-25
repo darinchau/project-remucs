@@ -34,8 +34,8 @@ train_params:
   num_workers_dl: 0
   autoencoder_batch_size: 14
   disc_start: 3     # Start training discriminator after this many steps. Set to a very small number for testing
-  disc_weight: 0.5      # Weight of discriminator loss
-  codebook_weight: 1    # Weight of codebook loss
+  disc_weight: 0.5
+  codebook_weight: 1
   commitment_beta: 0.2
   kl_weight: 0.5
   perceptual_weight: 1

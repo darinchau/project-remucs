@@ -498,9 +498,6 @@ class VAE(nn.Module):
         # Pre Quantization Convolution
         self.pre_quant_conv = nn.Conv2d(self.z_channels, self.z_channels, kernel_size=1)
 
-        # Codebook
-        self.codebook = nn.Embedding(self.codebook_size, self.z_channels)
-
         ##################### Decoder ######################
 
         # Post Quantization Convolution

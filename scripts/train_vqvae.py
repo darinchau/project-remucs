@@ -427,7 +427,7 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Arguments for vq vae training')
-    parser.add_argument('--config', dest='config_path', default='resources/config/vqvae.yaml', type=str)
+    parser.add_argument('--config', dest='config_path', default='resources/config/vae.yaml', type=str)
     parser.add_argument('--output-dir', dest='output_dir', type=str, default='resources/models/vqvae')
     parser.add_argument('--start-iter', dest='start_iter', type=int, default=0)
     args = parser.parse_args()
