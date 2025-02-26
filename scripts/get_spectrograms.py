@@ -39,38 +39,19 @@ from remucs.constants import (
     BEAT_MODEL_PATH,
     PROCESSED_SPECTROGRAMS_URLS
 )
-from remucs.spectrogram import process_spectrogram_features, SpectrogramCollection
-
-
-def thread_target(audio: Audio,
-                  url: YouTubeURL,
-                  parts: DemucsCollection,
-                  beats: BeatAnalysisResult,
-                  save_path: str,
-                  logs: Queue,
-                  ):
-    t = time.time()
-    s = process_spectrogram_features(audio, parts, beats, save_path=save_path, noreturn=False)
-    if s:
-        logs.put(f"Finished processing spectrograms for {url} (t={time.time()-t:.2f}s)")
 
 
 def main(path: str):
     song_ds = SongDataset(path, max_dir_size=None)
-    processes: dict[YouTubeURL, Process] = {}
-    song_ds.register("spectrograms", "{video_id}.spec.zip")
-
     audio_urls = song_ds.list_urls("audio")
     demucs = DemucsAudioSeparator()
-
-    logs = Queue()
 
     def mark_processed(url):
         song_ds.write_info(PROCESSED_SPECTROGRAMS_URLS, url)
         processed.add(url)
 
     processed = song_ds.read_info_urls(PROCESSED_SPECTROGRAMS_URLS)
-    for url in tqdm(song_ds.list_urls("spectrograms"), desc="Updating processed URLs"):
+    for url in tqdm(song_ds.list_urls("parts"), desc="Updating processed URLs"):
         if url in processed:
             continue
         mark_processed(url)
@@ -84,7 +65,7 @@ def main(path: str):
             # Not necessary, but just to be safe
             continue
 
-        spec_path = song_ds.get_path("spectrograms", url)
+        spec_path = song_ds.get_path("parts", url)
         if os.path.exists(spec_path):
             continue
 
@@ -108,49 +89,8 @@ def main(path: str):
 
         tqdm.write(f"Finished processing parts for {url} (t={time.time()-t:.2f}s)")
 
-        try:
-            beats = analyse_beat_transformer(
-                audio=audio,
-                url=url,
-                parts=parts,
-                backend="demucs",
-                use_cache=False,
-                model_path=BEAT_MODEL_PATH,
-                device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
-                use_loaded_model=True,
-            )
-        except Exception as e:
-            tqdm.write(f"Error analysing beats: {e}")
-            mark_processed(url)
-            continue
-
-        t = Process(target=thread_target, args=(audio, url, parts, beats, spec_path, logs))
-        t.start()
-        processes[url] = t
-
-        keys = list(processes.keys())
-        for url in keys:
-            t = processes[url]
-            if not t.is_alive():
-                t.join()
-                del processes[url]
-                tqdm.write(f"Finished processing {url}")
-                mark_processed(url)
-
-        tqdm.write(f"{len(processes)} threads still running...")
-
-        while not logs.empty():
-            log = logs.get()
-            tqdm.write(log)
-
-    tqdm.write("Waiting for all threads to finish...")
-
-    for url, t in processes.items():
-        t.join()
-        tqdm.write(f"Finished processing {url}")
-        mark_processed(url)
-
-    tqdm.write("All threads finished.")
+        parts_path = song_ds.get_path("parts", url)
+        parts.save(parts_path)
 
 
 if __name__ == "__main__":

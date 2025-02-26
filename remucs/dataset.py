@@ -1,6 +1,7 @@
 # This loads the automasher song dataset and make it into a torch one
 
 import os
+import random
 import tempfile
 import shutil
 import json
@@ -10,28 +11,16 @@ from torch.utils.data import Dataset
 import tqdm
 from AutoMasher.fyp import Audio, SongDataset, YouTubeURL
 from AutoMasher.fyp.audio.separation import DemucsCollection
-from .constants import SONG_PARTS_INFO
+from .constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE, TEST_SPLIT_PERCENTAGE
 
 
 class SongPartsDataset(Dataset):
-    def __init__(self, song_dataset_root_dir: str, slice_length: int, hop: int):
+    def __init__(self, song_dataset_root_dir: str, split_info: list[tuple[YouTubeURL, int]], slice_length: int, hop: int):
         """Initializes the song dataset - initializes the audio into segments of slice_length frames every hop frames"""
         self.sd = SongDataset(song_dataset_root_dir, max_dir_size=None)
-        self.sd.register(SONG_PARTS_INFO, "song_part_info.json", create=False)
-        if os.path.isfile(self.sd.get_path(SONG_PARTS_INFO)):
-            with open(self.sd.get_path(SONG_PARTS_INFO), 'r') as f:
-                self.parts_length_info: list[tuple[YouTubeURL, int]] = [(YouTubeURL(x), n) for x, n in json.load(f).items()]
-        else:
-            self.parts_length_info = []
-            for url in tqdm.tqdm(self.sd.list_urls("parts"), "Reading parts info..."):
-                parts, _ = get_paths(self.sd, url, check_length=True)
-                if not isinstance(parts, DemucsCollection):
-                    continue
-                nframes = parts.nframes
-                self.parts_length_info.append((url, nframes))
-            _safe_write_json({k: v for k, v in self.parts_length_info}, self.sd.get_path(SONG_PARTS_INFO))
         self.data_entries: list[tuple[YouTubeURL, int]] = []
-        for entry, length in tqdm.tqdm(self.parts_length_info, "Processing parts..."):
+        self._split_info = split_info
+        for entry, length in tqdm.tqdm(self._split_info, "Processing parts..."):
             k = 0
             p, _ = get_paths(self.sd, entry, check_length=False)
             while k + slice_length < length:
@@ -103,3 +92,30 @@ def _safe_write_json(data, filename):
     except Exception as e:
         print(f"Failed to write data: {e}")
         os.unlink(temp_path)
+
+
+def main(sd_dir: str):
+    random.seed(0)
+    sd = SongDataset(sd_dir)
+    parts_length_info: list[tuple[YouTubeURL, int]] = []
+    for url in tqdm.tqdm(sd.list_urls("parts"), "Reading parts info..."):
+        parts, _ = get_paths(sd, url, check_length=True)
+        if not isinstance(parts, DemucsCollection):
+            continue
+        nframes = parts.nframes
+        parts_length_info.append((url, nframes))
+    # Split part lengths info into train, val, and test
+    random.shuffle(parts_length_info)
+    train_len = int(len(parts_length_info) * TRAIN_SPLIT_PERCENTAGE)
+    val_len = int(len(parts_length_info) * VALIDATION_SPLIT_PERCENTAGE)
+    train_split = parts_length_info[:train_len]
+    val_split = parts_length_info[train_len:train_len + val_len]
+    test_split = parts_length_info[train_len + val_len:]
+    _safe_write_json({k: v for k, v in train_split}, "./resouces/part_info_train.json")
+    _safe_write_json({k: v for k, v in val_split}, "./resouces/part_info_val.json")
+    _safe_write_json({k: v for k, v in test_split}, "./resouces/part_info_test.json")
+
+
+if __name__ == "__main__":
+    import sys
+    main(sys.argv[1])
