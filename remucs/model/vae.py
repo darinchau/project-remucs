@@ -17,33 +17,30 @@ class VAEConfig:
     """List of number of channels in the downsample blocks."""
     mid_channels: list[int]
     """List of number of channels in the mid blocks."""
-    down_sample: list[bool]
+    down_sample: list[int]
     """List of boolean values to indicate if the downsample block should downsample."""
     num_down_layers: int
     """Number of layers in the downsample block."""
     num_mid_layers: int
     """Number of layers in the mid block"""
-
     num_up_layers: int
     """Number of layers in the upsample block."""
-
-    attn_down: list[bool]
-    """List of boolean values to indicate if the downsample block should have attention."""
-
     nsources: int
     """Number of stems in the input audio"""
-
     nchannels: int
     """Number of channels in the input audio"""
-
     norm_channels: int
     """Number of channels in the group normalization layer."""
-
     num_heads: int
     """Number of heads in the multihead attention layer."""
-
     gradient_checkpointing: bool
     """If true, then gradient checkpointing should be used."""
+
+    def __post_init__(self):
+        assert self.mid_channels[0] == self.down_channels[-1]
+        assert self.mid_channels[-1] == self.down_channels[-1]
+        assert len(self.down_sample) == len(self.down_channels) - 1
+        assert all(x <= 1 or x & 1 == 0 for x in self.down_sample)  # Otherwise upsample will not work
 
 
 class DownBlock(nn.Module):
@@ -51,7 +48,7 @@ class DownBlock(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        down_sample: bool,
+        down_sample: int,
         num_layers: int,
         norm_channels: int,
         use_gradient_checkpointing: bool = False
@@ -84,7 +81,7 @@ class DownBlock(nn.Module):
             nn.Conv2d(in_channels if i == 0 else out_channels, out_channels, kernel_size=1)
             for i in range(num_layers)
         ])
-        self.down_sample_conv = nn.Conv2d(out_channels, out_channels, 4, 2, 1) if self.down_sample else nn.Identity()
+        self.down_sample_conv = nn.Conv2d(out_channels, out_channels, 2 * self.down_sample, self.down_sample, self.down_sample // 2) if self.down_sample > 1 else nn.Identity()
 
     def forward(self, x):
         out = x
@@ -104,7 +101,7 @@ class UpBlock(nn.Module):
         self,
         in_channels: int,
         out_channels: int,
-        up_sample: bool,
+        up_sample: int,
         num_layers: int,
         norm_channels: int,
         use_gradient_checkpointing: bool = False
@@ -138,7 +135,7 @@ class UpBlock(nn.Module):
             for i in range(num_layers)
         ])
 
-        self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, 4, 2, 1) if self.up_sample else nn.Identity()
+        self.up_sample_conv = nn.ConvTranspose2d(in_channels, in_channels, 2 * self.up_sample, self.up_sample, self.up_sample // 2) if self.up_sample > 1 else nn.Identity()
 
     def forward(self, x):
         # Upsample
@@ -242,20 +239,11 @@ class VAE(nn.Module):
         self.num_up_layers = model_config.num_up_layers
         self.gradient_checkpointing = model_config.gradient_checkpointing
 
-        # To disable attention in Downblock of Encoder and Upblock of Decoder
-        self.attns = model_config.attn_down
-
         # Latent Dimension
         self.nsources = model_config.nsources
         self.norm_channels = model_config.norm_channels
         self.num_heads = model_config.num_heads
         self.nchannels = model_config.nchannels
-
-        # Assertion to validate the channel information
-        assert self.mid_channels[0] == self.down_channels[-1]
-        assert self.mid_channels[-1] == self.down_channels[-1]
-        assert len(self.down_sample) == len(self.down_channels) - 1
-        assert len(self.attns) == len(self.down_channels) - 1
 
         # Reverse the downsample list to get upsample list
         self.up_sample = list(reversed(self.down_sample))
