@@ -10,6 +10,7 @@ REJECTED_URLS = "_project_remucs_rejected_urls"  # URLs that were rejected in th
 CANDIDATE_URLS = "_project_remucs_candidate_urls"  # URLs that are candidates for the dataset
 PROCESSED_URLS = "_project_remucs_processed_urls"  # URLs that have been processed
 PROCESSED_SPECTROGRAMS_URLS = "_project_remucs_processed_spectrograms_urls"  # URLs that have been processed
+SONG_PARTS_INFO = "_project_remucs_song_parts_info"  # A file that points to the length of each part
 
 # Training splits
 TRAIN_SPLIT = "_project_remucs_train_split"

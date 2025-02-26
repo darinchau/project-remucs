@@ -182,40 +182,15 @@ def train(config_path: str, output_dir: str, *, start_from_iter: int = 0,
     set_seed(train_config['seed'])
 
     # Create the model and dataset #
-    model: VAE = VAE(
-        im_channels_in=dataset_config['im_channels'],
-        im_channels_out=1,
-        model_config=vae_config
-    ).to(device)
+    model: VAE = VAE(model_config=vae_config).to(device)
     print(f"Starting from iteration {start_from_iter}")
 
     # Count the number of parameters
     numel = 0
     for p in model.parameters():
         numel += p.numel()
-    print('Total number of parameters: {}'.format(numel))
+    print('Total number of model parameters: {}'.format(numel))
     del numel
-
-    # Create the dataset
-    im_dataset = load_dataset(
-        lookup_table_path=dataset_config["train_lookup_table_path"],
-        local_dataset_dir=dataset_dir,
-        credentials_path=dataset_config["credentials_path"],
-        bucket_name=dataset_config["bucket_name"],
-        cache_dir=dataset_config["cache_dir"],
-        nbars=dataset_config["nbars"],
-        backup_dataset_first_n=dataset_config["backup_dataset_first_n_train"]
-    )
-
-    val_dataset = load_dataset(
-        lookup_table_path=dataset_config["val_lookup_table_path"],
-        local_dataset_dir=dataset_dir,
-        credentials_path=dataset_config["credentials_path"],
-        bucket_name=dataset_config["bucket_name"],
-        cache_dir=dataset_config["cache_dir"],
-        nbars=dataset_config["nbars"],
-        backup_dataset_first_n=dataset_config["backup_dataset_first_n_val"]
-    )
 
     print('Dataset size: {}'.format(len(im_dataset)))
 
