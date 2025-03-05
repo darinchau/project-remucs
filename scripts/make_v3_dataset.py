@@ -43,8 +43,6 @@ from remucs.constants import (
     PROCESSED_URLS,
 )
 
-from remucs.spectrogram import process_spectrogram_features
-
 LIST_SPLIT_SIZE = 300
 MAX_ERRORS = 10
 MAX_ERRORS_TIME = 20
