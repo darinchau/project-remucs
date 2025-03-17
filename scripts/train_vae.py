@@ -302,3 +302,9 @@ def main():
 
 if __name__ == '__main__':
     main()
+
+
+# TODO: Add discriminator training
+# TODO: Add adversarial loss
+# TODO: Start from middle of the training
+# TODO: is gradient checkpointing implemented?
