@@ -1,51 +1,38 @@
 # Config file for autoencoder training
 
-dataset_params:
-  nbars: 4
-  im_channels : 4
-  im_size : 512
-  num_workers_ds : 0 # Number of workers for loading the dataset
-  dataset_dir: "./resources/specs"
-  train_lookup_table_path: "./resources/lookup_table_train.json"
-  val_lookup_table_path: "./resources/lookup_table_val.json"
-  credentials_path: "./resources/key.json"
-  bucket_name: "project-remucs-specs"
-  cache_dir: "./resources/spec_cache"
-  val_count: 100 # Number of validation samples
-  backup_dataset_first_n_train: 10
-  backup_dataset_first_n_val: 3
+nbars: 4 # Number of bars in the input
+nsources : 4 # Number of sources in the input
+nchannels: 2 # Number of channels in the input
+num_workers_ds : 0 # Number of workers for loading the dataset
+dataset_dir: "D:/audio-dataset-v3" # Directory containing the dataset
+output_dir: "D:/output" # Directory to save the output
+val_count: 100 # Number of validation samples
+sample_rate: 48000 # Sample rate of the audio
+splice_size: 195072 # Number of frames in each splice. Has to be somewhat carefully chosen
 
-autoencoder_params:
-  nsources: 4
-  nchannels: 2
-  down_channels : [32, 64, 128, 128]
-  mid_channels : [128, 128]
-  down_sample : [2, 2, 4]
-  norm_channels: 32
-  num_heads: 4
-  num_down_layers : 2
-  num_mid_layers : 2
-  num_up_layers : 2
-  gradient_checkpointing : True
+down_channels : [32, 64, 128, 128] # Number of channels in each downsampling layer
+mid_channels : [128, 128] # Number of channels in each middle layer
+down_sample : [2, 2, 4] # Downsampling factors for each downsampling layer
+norm_channels: 32 # Number of channels for normalization
+num_heads: 4 # Number of attention heads
+num_down_layers : 2 # Number of downsampling layers
+num_mid_layers : 2 # Number of middle layers
+num_up_layers : 2 # Number of upsampling layers
+gradient_checkpointing : True # Whether to use gradient checkpointing
 
-train_params:
-  seed : 1943
-  num_workers_dl: 0
-  autoencoder_batch_size: 14
-  disc_start: 3     # Start training discriminator after this many steps. Set to a very small number for testing
-  disc_weight: 0.5
-  codebook_weight: 1
-  commitment_beta: 0.2
-  kl_weight: 0.5
-  perceptual_weight: 1
-  wasserstein_regularizer: 0.1 # Regularizer for the wasserstein loss
-  epochs: 2
-  max_discr_to_gen_ratio: 8 # Maximum ratio of discriminator to generator steps
-  autoencoder_lr: 0.00001
-  autoencoder_acc_steps: 16
-  autoencoder_img_save_steps: 512
-  vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth'
-  run_name: "vqvae-training-6"
-  mel_weight_recon_loss: False # If True, use mel filter bins to reweight the reconstruction loss
-  disc_loss: "wasserstein" # "bce", "mse", or "wasserstein"
-  val_steps: 512
+seed : 1943 # Random seed
+num_workers_dl: 0 # Number of workers for data loading
+autoencoder_batch_size: 1 # Batch size for autoencoder training
+disc_start: 3 # Start training discriminator after this many steps. Set to a very small number for testing
+disc_weight: 0.5 # Weight for the discriminator loss
+kl_weight: 0.5 # Weight for the KL divergence loss
+perceptual_weight: 1 # Weight for the perceptual loss
+wasserstein_regularizer: 0.1 # Regularizer for the Wasserstein loss
+epochs: 2 # Number of training epochs
+autoencoder_lr: 0.00001 # Learning rate for the autoencoder
+autoencoder_acc_steps: 16 # Number of accumulation steps for the autoencoder
+save_steps: 512 # Number of steps between saving images
+vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
+run_name: "vqvae-training" # Name of the training run
+disc_loss: "wasserstein" # Type of discriminator loss: "bce", "mse", or "wasserstein"
+val_steps: 512 # Number of steps between validations
