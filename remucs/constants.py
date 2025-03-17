@@ -13,10 +13,6 @@ PROCESSED_SPECTROGRAMS_URLS = "_project_remucs_processed_spectrograms_urls"  # U
 SONG_PARTS_INFO = "_project_remucs_song_parts_info"  # A file that points to the length of each part
 
 # Training splits
-TRAIN_SPLIT = "_project_remucs_train_split"
-VALIDATION_SPLIT = "_project_remucs_validation_split"
-TEST_SPLIT = "_project_remucs_test_split"
-
 TRAIN_SPLIT_PERCENTAGE = 0.8
 VALIDATION_SPLIT_PERCENTAGE = 0.1
 TEST_SPLIT_PERCENTAGE = 0.1

@@ -15,6 +15,7 @@ from torch.utils.data import ConcatDataset, Dataset
 from torch.utils.data.dataloader import DataLoader
 from torch.optim.adam import Adam
 from torch import nn, Tensor
+import torch.autograd as autograd
 from torch.amp.autocast_mode import autocast
 import wandb
 import pickle
@@ -22,7 +23,7 @@ from accelerate import Accelerator
 from remucs.model.vae import VAE, VAEConfig
 from remucs.model.vggish import Vggish
 from remucs.preprocess import spectro, ispectro
-from remucs.constants import TRAIN_SPLIT, VALIDATION_SPLIT
+from remucs.constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE
 import torch.nn.functional as F
 from AutoMasher.fyp import SongDataset, YouTubeURL
 
@@ -49,11 +50,13 @@ class Config:
     num_mid_layers: int
     num_up_layers: int
     gradient_checkpointing: bool
+    kl_mean: bool
     seed: int
     num_workers_dl: int
     autoencoder_batch_size: int
     disc_start: int
     disc_weight: float
+    disc_hidden: int
     kl_weight: float
     perceptual_weight: float
     wasserstein_regularizer: float
@@ -80,6 +83,7 @@ def get_vae_config(config: Config) -> VAEConfig:
         gradient_checkpointing=config.gradient_checkpointing,
         nsources=config.nsources,
         nchannels=config.nchannels,
+        kl_mean=config.kl_mean,
     )
 
 
@@ -104,8 +108,28 @@ def set_seed(seed: int):
         torch.cuda.manual_seed_all(seed)
 
 
+class Discriminator(nn.Module):
+    def __init__(self, hidden_size: int):
+        super(Discriminator, self).__init__()
+
+        main = nn.Sequential(
+            nn.Linear(1024, hidden_size),
+            nn.ReLU(True),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(True),
+            nn.Linear(hidden_size, hidden_size),
+            nn.ReLU(True),
+            nn.Linear(hidden_size, 1),
+        )
+        self.main = main
+
+    def forward(self, inputs):
+        output = self.main(inputs)
+        return output.view(-1)
+
+
 class Inference:
-    def __init__(self, model: VAE, config: Config):
+    def __init__(self, model: VAE, config: Config, do_sanity_check: bool = False):
         self.model = model
 
         self.vggish = Vggish().to(device)
@@ -114,38 +138,118 @@ class Inference:
         for p in self.vggish.model.parameters():
             p.requires_grad = False
 
+        self.discriminator = Discriminator(config.disc_hidden).to(device)
+        self.do_sanity_check = do_sanity_check
+
     @property
     def sr(self):
         return self.config.sample_rate
 
-    def __call__(self, im: Tensor, target: Tensor):
+    def get_wgan_gp(self, batch_size: int, real_data: Tensor, fake_data: Tensor):
+        alpha = torch.rand(batch_size, 1).expand(real_data.size()).to(device)
+
+        interpolates = alpha * real_data + ((1 - alpha) * fake_data)
+        interpolates = interpolates.to(device)
+        interpolates = autograd.Variable(interpolates, requires_grad=True)
+
+        disc_interpolates = self.discriminator(interpolates)
+
+        gradients = autograd.grad(
+            outputs=disc_interpolates,
+            inputs=interpolates,
+            grad_outputs=torch.ones(disc_interpolates.size()).to(device),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True
+        )[0]
+
+        gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean() * self.config.wasserstein_regularizer
+        return gradient_penalty
+
+    def generator_round(self, im: Tensor, target: Tensor):
+        self.discriminator.eval()
+
         # im is (batch, source, channel, time)
         im = im.float().to(device)
         B, S, C, T = im.shape
 
-        assert target.shape == (B, C, T), f"Expected {(B, C, T)}, got {target.shape}"
-        assert S == self.config.nsources, f"Expected {self.config.nsources}, got {S}"
-        assert C == self.config.nchannels, f"Expected {self.config.nchannels}, got {C}"
-        assert T == self.config.splice_size, f"Expected {self.config.splice_size}, got {T}"
+        if self.do_sanity_check:
+            assert target.shape == (B, C, T), f"Expected {(B, C, T)}, got {target.shape}"
+            assert S == self.config.nsources, f"Expected {self.config.nsources}, got {S}"
+            assert C == self.config.nchannels, f"Expected {self.config.nchannels}, got {C}"
+            assert T == self.config.splice_size, f"Expected {self.config.splice_size}, got {T}"
 
         # Preprocess
         with torch.autocast("cuda"):
             out, _, _, _, kl_loss = self.model(im)
 
-        # out.shape = (batch, channel, time)
-        assert out.shape == (B, C, T), f"Expected {(B, C, T)}, got {out.shape}"
+        if self.do_sanity_check:
+            # out.shape = (batch, channel, time)
+            assert out.shape == (B, C, T), f"Expected {(B, C, T)}, got {out.shape}"
 
         losses = {}
-        t_features = self.vggish((target, self.sr))
-        s_features = self.vggish((out, self.sr))
+        t_features = self.vggish((target, self.sr)).flatten(-2, -1)
+        s_features = self.vggish((out, self.sr)).flatten(-2, -1)
         with torch.autocast("cuda"):
             perceptual_loss = F.mse_loss(t_features, s_features)
             recon_loss = F.mse_loss(out, target)
 
-        # TODO do a adversarial loss over s and t features
+        dgz = self.discriminator(s_features)
+
         losses['recon_loss'] = recon_loss
         losses['perceptual_loss'] = perceptual_loss
         losses['kl_loss'] = kl_loss
+
+        # Generator wants to minimize dgz
+        if self.config.disc_loss == 'wgan':
+            losses['gen_loss'] = torch.mean(dgz)
+        else:
+            losses['gen_loss'] = F.binary_cross_entropy_with_logits(dgz, torch.ones_like(dgz))
+
+        self.discriminator.train()
+        return out, losses
+
+    def discriminator_round(self, im: Tensor, target: Tensor):
+        self.model.eval()
+
+        # im is (batch, source, channel, time)
+        im = im.float().to(device)
+        B, S, C, T = im.shape
+
+        if self.do_sanity_check:
+            assert target.shape == (B, C, T), f"Expected {(B, C, T)}, got {target.shape}"
+            assert S == self.config.nsources, f"Expected {self.config.nsources}, got {S}"
+            assert C == self.config.nchannels, f"Expected {self.config.nchannels}, got {C}"
+            assert T == self.config.splice_size, f"Expected {self.config.splice_size}, got {T}"
+
+        # Preprocess
+        with torch.no_grad():
+            with torch.autocast("cuda"):
+                out, _, _, _, _ = self.model(im)
+
+        if self.do_sanity_check:
+            # out.shape = (batch, channel, time)
+            assert out.shape == (B, C, T), f"Expected {(B, C, T)}, got {out.shape}"
+
+        losses = {}
+        with torch.no_grad():
+            t_features = self.vggish((target, self.sr)).flatten(-2, -1)
+            s_features = self.vggish((out, self.sr)).flatten(-2, -1)
+
+        dx = self.discriminator(t_features)
+        dgz = self.discriminator(s_features)
+
+        # Discriminator wants to maximize dx and minimize dgz
+        if self.config.disc_loss == 'wgan':
+            d_loss = torch.mean(dx) - torch.mean(dgz)
+            gp = self.get_wgan_gp(B, t_features, s_features)
+            d_loss += gp
+        else:
+            d_loss = F.binary_cross_entropy_with_logits(dx, torch.ones_like(dx)) + F.binary_cross_entropy_with_logits(dgz, torch.zeros_like(dgz))
+
+        losses['disc_loss'] = d_loss
+
+        self.model.train()
         return out, losses
 
 
@@ -193,12 +297,14 @@ def train(config: Config):
 
     _show_num_params(vae)
 
-    sd = SongDataset(config.dataset_dir)
+    sd = SongDataset(config.dataset_dir, load_on_the_fly=True)  # We don't need the data files anyway so use load_on_the_fly to skip loading them
     print('Dataset size: {}'.format(len(sd)))
 
     songs = sd.list_urls("audio")
-    train_urls = [url for url in songs if url not in sd.read_info_urls(TRAIN_SPLIT)]
-    val_urls = [url for url in songs if url not in sd.read_info_urls(VALIDATION_SPLIT)]
+    # Do train-val-test split
+    random.shuffle(songs)
+    train_urls = songs[:int(len(songs) * TRAIN_SPLIT_PERCENTAGE)]
+    val_urls = songs[int(len(songs) * TRAIN_SPLIT_PERCENTAGE):int(len(songs) * (TRAIN_SPLIT_PERCENTAGE + VALIDATION_SPLIT_PERCENTAGE))]
 
     print('Train size: {}'.format(len(train_urls)))
     print('Val size: {}'.format(len(val_urls)))
@@ -214,11 +320,12 @@ def train(config: Config):
         os.makedirs(config.output_dir)
 
     optimizer_g = Adam(vae.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
+    optimizer_d = Adam(vae.parameters(), lr=config.autoencoder_lr, betas=(0.5, 0.999))
 
     accelerator = Accelerator(mixed_precision="bf16")
 
-    vae, optimizer_g, train_dl, val_dl = accelerator.prepare(
-        vae, optimizer_g, train_dl, val_dl
+    vae, optimizer_g, optimizer_d, train_dl, val_dl = accelerator.prepare(
+        vae, optimizer_g, optimizer_d, train_dl, val_dl
     )
 
     inference = Inference(vae, config)
@@ -229,40 +336,44 @@ def train(config: Config):
         config=asdict(config),
     )
 
-    recon_losses = []
-    perceptual_losses = []
-    kl_losses = []
-    disc_losses = []
-    gen_losses = []
-
     step_count = 0
 
     for epoch in range(config.epochs):
         optimizer_g.zero_grad()
-        for im in train_dl:
+        for im in tqdm(train_dl, desc=f'Epoch {epoch + 1}/{config.epochs}'):
             step_count += 1
 
             if step_count % config.save_steps == 0:
                 save_model(inference, config.output_dir, step_count)
 
-            _, loss = inference(im[:, :-1], im[:, -1])
-            recon_losses.append(loss['recon_loss'].item())
-            perceptual_losses.append(loss['perceptual_loss'].item())
-            kl_losses.append(loss['kl_loss'].item())
+            # Hard code to be one step of discriminator for every step of generator
+            is_train_discriminator = step_count >= config.disc_start and step_count % 2 == 0
+            if is_train_discriminator:
+                _, loss = inference.discriminator_round(im[:, :-1], im[:, -1])
+                d_loss = loss['disc_loss']
+                accelerator.backward(d_loss)
+                optimizer_d.step()
 
-            g_loss = (
-                loss['recon_loss'] +
-                loss['kl_loss'] * config.kl_weight +
-                loss['perceptual_loss'] * config.perceptual_weight
-            )
-            accelerator.backward(g_loss)
-            optimizer_g.step()
+                wandb.log({
+                    "Discriminator Loss": d_loss.item()
+                }, step=step_count)
+            else:
 
-            wandb.log({
-                "Reconstruction Loss": recon_losses[-1],
-                "Perceptual Loss": perceptual_losses[-1],
-                "KL Loss": kl_losses[-1]
-            }, step=step_count)
+                _, loss = inference.generator_round(im[:, :-1], im[:, -1])
+                g_loss = (
+                    loss['recon_loss'] +
+                    loss['kl_loss'] * config.kl_weight +
+                    loss['perceptual_loss'] * config.perceptual_weight
+                )
+
+                accelerator.backward(g_loss)
+                optimizer_g.step()
+
+                wandb.log({
+                    "Reconstruction Loss": loss['recon_loss'].item(),
+                    "Perceptual Loss": loss['perceptual_loss'].item(),
+                    "KL Loss": loss['kl_loss'].item()
+                }, step=step_count)
 
             if step_count % config.val_steps == 0:
                 vae.eval()
@@ -271,7 +382,7 @@ def train(config: Config):
                     val_perceptual_losses = []
                     val_kl_losses = []
                     for val_im in val_dl:
-                        _, val_loss = inference(val_im[:, :-1], val_im[:, -1])
+                        _, val_loss = inference.generator_round(val_im[:, :-1], val_im[:, -1])
                         val_recon_losses.append(val_loss['recon_loss'].item())
                         val_perceptual_losses.append(val_loss['perceptual_loss'].item())
                         val_kl_losses.append(val_loss['kl_loss'].item())
@@ -293,7 +404,7 @@ def train(config: Config):
 
 def main():
     parser = argparse.ArgumentParser(description='Train VAE model with discriminator')
-    parser.add_argument('--config', type=str, help='Path to the config file', required=True)
+    parser.add_argument('--config', type=str, help='Path to the config file', default='resources/config/vae.yaml')
     args = parser.parse_args()
 
     config = load_config_from_yaml(args.config)
@@ -303,8 +414,4 @@ def main():
 if __name__ == '__main__':
     main()
 
-
-# TODO: Add discriminator training
-# TODO: Add adversarial loss
 # TODO: Start from middle of the training
-# TODO: is gradient checkpointing implemented?

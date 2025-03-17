@@ -35,6 +35,8 @@ class VAEConfig:
     """Number of heads in the multihead attention layer."""
     gradient_checkpointing: bool
     """If true, then gradient checkpointing should be used."""
+    kl_mean: bool
+    """If true, then a mean reduction strategy over the KL loss is used, otherwise a sum is used"""
 
     def __post_init__(self):
         assert self.mid_channels[0] == self.down_channels[-1]
@@ -238,6 +240,7 @@ class VAE(nn.Module):
         self.num_mid_layers = model_config.num_mid_layers
         self.num_up_layers = model_config.num_up_layers
         self.gradient_checkpointing = model_config.gradient_checkpointing
+        self.kl_mean = model_config.kl_mean
 
         # Latent Dimension
         self.nsources = model_config.nsources
@@ -340,11 +343,13 @@ class VAE(nn.Module):
         out = self.encoder_conv_out(out)
         out = self.pre_encode_conv(out)
         mean, logvar = torch.chunk(out, 2, dim=1)
-        kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
+        if self.kl_mean:
+            kl_loss = -0.5 * torch.mean(1 + logvar - mean.pow(2) - logvar.exp())
+        else:
+            kl_loss = -0.5 * torch.sum(1 + logvar - mean.pow(2) - logvar.exp())
         return mean, logvar, kl_loss
 
     def decode(self, z):
-        # TODO verify input shape of z
         out = z
         out = self.post_encode_conv(out)
         out = self.decoder_conv_in(out)
@@ -377,6 +382,19 @@ def read_config(config_path: str):
         return VAEConfig(**config['autoencoder_params'])
     except KeyError:
         try:
-            return VAEConfig(**config)
+            return VAEConfig(
+                down_channels=config["down_channels"],
+                mid_channels=config["mid_channels"],
+                down_sample=config["down_sample"],
+                num_down_layers=config["num_down_layers"],
+                num_mid_layers=config["num_mid_layers"],
+                num_up_layers=config["num_up_layers"],
+                nsources=config["nsources"],
+                nchannels=config["nchannels"],
+                norm_channels=config["norm_channels"],
+                num_heads=config["num_heads"],
+                gradient_checkpointing=config["gradient_checkpointing"],
+                kl_mean=config["kl_mean"]
+            )
         except KeyError:
             raise ValueError("Config file does not contain the correct keys")

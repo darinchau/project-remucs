@@ -62,3 +62,19 @@ def process(x):
     z = torch.view_as_complex(x.contiguous())
     x = ispectro(z)
     return x
+
+
+def is_valid_splice_number(x):
+    """A super inefficient way to check if the splicing is correct"""
+    # This function is not used anywhere, but it is useful to check if the splicing is correct
+    from AutoMasher.fyp import Audio
+    from remucs.model.vae import VAE, read_config
+    audio = Audio.load("D:/audio-dataset-v3/audio/__kJsUfQtK0.wav").slice_frames(0, x)
+    x = torch.stack([audio.data for _ in range(4)])[None]
+    model = VAE(read_config("./resources/config/vae.yaml"))
+    x, mx, std, shapes = model._preprocess(x)
+    mean, logvar, kl_loss = model.encode(x)
+    z = mean + torch.exp(0.5 * logvar) * torch.randn(mean.shape).to(device=x.device)
+    out = model.decode(z)
+    print(out.shape, x.shape)
+    return out.shape[-1] == x.shape[-1]
