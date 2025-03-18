@@ -242,7 +242,7 @@ class VAEOutput(NamedTuple):
 
 
 def _should_compute(x: dict, compute: str) -> bool:
-    return compute in x and x[compute] is not None
+    return compute not in x or x[compute] is not None
 
 
 class VAE(nn.Module):
@@ -317,11 +317,12 @@ class VAE(nn.Module):
         self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
         self.decoder_conv_out = nn.Conv2d(self.down_channels[0], self.nchannels * 2, kernel_size=3, padding=1)
 
-    def _preprocess(self, x: Tensor):
+    def _preprocess(self, x: Tensor, check: bool = True):
         # input shape: (batch, source, channel, time)
         assert len(x.shape) == 4
-        assert x.shape[1] == self.nsources
-        assert x.shape[2] == self.nchannels
+        if check:
+            assert x.shape[1] == self.nsources
+            assert x.shape[2] == self.nchannels
         Tx = x.shape[-1]
         z = spectro(x)
         B, S, C, Fq, T = z.shape
@@ -333,7 +334,8 @@ class VAE(nn.Module):
         x = x.reshape(B, S * C * 2, Fq, T)
 
         # Output x: (B, S * C*2, F, T)
-        assert x.shape == (B, S * C * 2, Fq, T), f"Expected {(B, S * C * 2, Fq, T)}, got {x.shape}"
+        if check:
+            assert x.shape == (B, S * C * 2, Fq, T), f"Expected {(B, S * C * 2, Fq, T)}, got {x.shape}"
         return x, mean, std, (B, Fq, T, Tx)
 
     def _postprocess(self, x: Tensor, mean, std, shapes):

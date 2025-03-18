@@ -37,5 +37,5 @@ save_steps: 512 # Number of steps between saving images
 vqvae_autoencoder_ckpt_name: 'vqvae_autoencoder_ckpt.pth' # Checkpoint name for the VQ-VAE autoencoder
 run_name: "vqvae-training" # Name of the training run
 disc_loss: "wgan" # Type of discriminator loss: "bce", "mse", or "wgan"
-recon_loss: "spec" # Type of reconstruction loss: "spec", "l2", or "both". "both" is the sum of the two, "l2" is the L2 loss on audio, and "spec" is the l2 loss on the spectrogram
+recon_loss: "both" # Type of reconstruction loss: "spec", "l2", or "both". "both" is the sum of the two, "l2" is the L2 loss on audio, and "spec" is the l2 loss on the spectrogram
 val_steps: 512 # Number of steps between validations

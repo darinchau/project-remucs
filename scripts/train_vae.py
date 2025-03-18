@@ -182,31 +182,30 @@ class Inference:
 
         # Preprocess
         with torch.autocast("cuda"):
-            output: VAEOutput = self.model(im, mean=None, logvar=None, z=None)
+            output: VAEOutput = self.model(im, mean=None, logvar=None, z=None, in_spec=None)
         out = output.out
         kl_loss = output.kl_loss
         out_spec = output.out_spec
-        in_spec = output.in_spec
         assert out is not None
         assert kl_loss is not None
         assert out_spec is not None
-        assert in_spec is not None
 
         if self.do_sanity_check:
             # out.shape = (batch, channel, time)
             assert out.shape == (B, C, T), f"Expected {(B, C, T)}, got {out.shape}"
 
+        target_spec = self.model._preprocess(target[:, None], check=False)[0]
         losses = {}
         t_features = self.vggish((target, self.sr)).flatten(-2, -1)
         s_features = self.vggish((out, self.sr)).flatten(-2, -1)
         with torch.autocast("cuda"):
             perceptual_loss = F.mse_loss(t_features, s_features)
             if self.config.recon_loss == 'spec':
-                recon_loss = F.mse_loss(out_spec, in_spec)
+                recon_loss = F.mse_loss(out_spec, target_spec)
             elif self.config.recon_loss == 'l2':
                 recon_loss = F.mse_loss(out, target)
             else:
-                recon_loss = F.mse_loss(out, target) + F.mse_loss(out_spec, in_spec)
+                recon_loss = F.mse_loss(out, target) + F.mse_loss(out_spec, target_spec)
 
         dgz = self.discriminator(s_features)
 
