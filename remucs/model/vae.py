@@ -9,6 +9,7 @@ import torch.nn.functional as F
 from AutoMasher.fyp.audio.base.audio_collection import DemucsCollection
 import yaml
 from ..preprocess import spectro, ispectro
+from typing import NamedTuple
 
 
 @dataclass
@@ -230,6 +231,20 @@ class MidBlock(nn.Module):
         return out
 
 
+class VAEOutput(NamedTuple):
+    out: Tensor | None
+    z: Tensor | None
+    mean: Tensor | None
+    logvar: Tensor | None
+    kl_loss: Tensor | None
+    out_spec: Tensor | None
+    in_spec: Tensor | None
+
+
+def _should_compute(x: dict, compute: str) -> bool:
+    return compute in x and x[compute] is not None
+
+
 class VAE(nn.Module):
     def __init__(self, model_config: VAEConfig):
         super().__init__()
@@ -363,13 +378,32 @@ class VAE(nn.Module):
         out = self.decoder_conv_out(out)
         return out
 
-    def forward(self, x):
-        x, mx, std, shapes = self._preprocess(x)
-        mean, logvar, kl_loss = self.encode(x)
-        z = mean + torch.exp(0.5 * logvar) * torch.randn(mean.shape).to(device=x.device)
-        out = self.decode(z)
-        out = self._postprocess(out, mx, std, shapes)
-        return out, z, mean, logvar, kl_loss
+    def forward(self, x, **kwargs) -> VAEOutput:
+        """Specify in the kwargs x=None to not return x. For example, forward(x, mean=None)"""
+        in_spec, mx, std, shapes = self._preprocess(x)
+        mean, logvar, kl_loss = self.encode(in_spec)
+        z = mean + torch.exp(0.5 * logvar) * torch.randn(mean.shape).to(device=in_spec.device)
+
+        compute_out = _should_compute(kwargs, "out")
+        compute_out_spec = _should_compute(kwargs, "out_spec") or compute_out
+        if compute_out_spec:
+            out_spec = self.decode(z)
+            if compute_out:
+                out = self._postprocess(out_spec, mx, std, shapes)
+            else:
+                out = None
+        else:
+            out = None
+            out_spec = None
+        return VAEOutput(
+            out=out if _should_compute(kwargs, "out") else None,
+            z=z if _should_compute(kwargs, "z") else None,
+            mean=mean if _should_compute(kwargs, "mean") else None,
+            logvar=logvar if _should_compute(kwargs, "logvar") else None,
+            kl_loss=kl_loss if _should_compute(kwargs, "kl_loss") else None,
+            out_spec=out_spec if _should_compute(kwargs, "out_spec") else None,
+            in_spec=in_spec if _should_compute(kwargs, "in_spec") else None
+        )
 
 
 def read_config(config_path: str):

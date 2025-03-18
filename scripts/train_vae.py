@@ -20,7 +20,7 @@ from torch.amp.autocast_mode import autocast
 import wandb
 import pickle
 from accelerate import Accelerator
-from remucs.model.vae import VAE, VAEConfig
+from remucs.model.vae import VAE, VAEConfig, VAEOutput
 from remucs.model.vggish import Vggish
 from remucs.preprocess import spectro, ispectro
 from remucs.constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE
@@ -67,6 +67,7 @@ class Config:
     vqvae_autoencoder_ckpt_name: str
     run_name: str
     disc_loss: str
+    recon_loss: str
     val_steps: int
 
 
@@ -181,7 +182,15 @@ class Inference:
 
         # Preprocess
         with torch.autocast("cuda"):
-            out, _, _, _, kl_loss = self.model(im)
+            output: VAEOutput = self.model(im, mean=None, logvar=None, z=None)
+        out = output.out
+        kl_loss = output.kl_loss
+        out_spec = output.out_spec
+        in_spec = output.in_spec
+        assert out is not None
+        assert kl_loss is not None
+        assert out_spec is not None
+        assert in_spec is not None
 
         if self.do_sanity_check:
             # out.shape = (batch, channel, time)
@@ -192,7 +201,12 @@ class Inference:
         s_features = self.vggish((out, self.sr)).flatten(-2, -1)
         with torch.autocast("cuda"):
             perceptual_loss = F.mse_loss(t_features, s_features)
-            recon_loss = F.mse_loss(out, target)
+            if self.config.recon_loss == 'spec':
+                recon_loss = F.mse_loss(out_spec, in_spec)
+            elif self.config.recon_loss == 'l2':
+                recon_loss = F.mse_loss(out, target)
+            else:
+                recon_loss = F.mse_loss(out, target) + F.mse_loss(out_spec, in_spec)
 
         dgz = self.discriminator(s_features)
 
@@ -225,7 +239,9 @@ class Inference:
         # Preprocess
         with torch.no_grad():
             with torch.autocast("cuda"):
-                out, _, _, _, _ = self.model(im)
+                output: VAEOutput = self.model(im, mean=None, logvar=None, z=None)
+        out = output.out
+        assert out is not None
 
         if self.do_sanity_check:
             # out.shape = (batch, channel, time)
