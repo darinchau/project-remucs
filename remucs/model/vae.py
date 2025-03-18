@@ -338,7 +338,7 @@ class VAE(nn.Module):
             assert x.shape == (B, S * C * 2, Fq, T), f"Expected {(B, S * C * 2, Fq, T)}, got {x.shape}"
         return x, mean, std, (B, Fq, T, Tx)
 
-    def _postprocess(self, x: Tensor, mean, std, shapes):
+    def _postprocess(self, x: Tensor, mean: Tensor, std: Tensor, shapes: tuple, check: bool = True):
         B, Fq, T, Tx = shapes
         x = x * std[:, 0] + mean[:, 0]
         # x shape: (B, C*2, F, T)
@@ -380,9 +380,9 @@ class VAE(nn.Module):
         out = self.decoder_conv_out(out)
         return out
 
-    def forward(self, x, **kwargs) -> VAEOutput:
+    def forward(self, x, check=True, **kwargs) -> VAEOutput:
         """Specify in the kwargs x=None to not return x. For example, forward(x, mean=None)"""
-        in_spec, mx, std, shapes = self._preprocess(x)
+        in_spec, mx, std, shapes = self._preprocess(x, check=check)
         mean, logvar, kl_loss = self.encode(in_spec)
         z = mean + torch.exp(0.5 * logvar) * torch.randn(mean.shape).to(device=in_spec.device)
 
@@ -391,7 +391,7 @@ class VAE(nn.Module):
         if compute_out_spec:
             out_spec = self.decode(z)
             if compute_out:
-                out = self._postprocess(out_spec, mx, std, shapes)
+                out = self._postprocess(out_spec, mx, std, shapes, check=check)
             else:
                 out = None
         else:

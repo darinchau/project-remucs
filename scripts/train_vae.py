@@ -26,6 +26,7 @@ from remucs.preprocess import spectro, ispectro
 from remucs.constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE
 import torch.nn.functional as F
 from AutoMasher.fyp import SongDataset, YouTubeURL
+import time
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -60,6 +61,8 @@ class Config:
     kl_weight: float
     perceptual_weight: float
     wasserstein_regularizer: float
+    gen_weight: float
+    spec_weight: float
     epochs: int
     autoencoder_lr: float
     autoencoder_acc_steps: int
@@ -69,6 +72,7 @@ class Config:
     disc_loss: str
     recon_loss: str
     val_steps: int
+    turn_off_checking_steps: int
 
 
 def get_vae_config(config: Config) -> VAEConfig:
@@ -130,7 +134,7 @@ class Discriminator(nn.Module):
 
 
 class Inference:
-    def __init__(self, model: VAE, config: Config, do_sanity_check: bool = False):
+    def __init__(self, model: VAE, config: Config, do_sanity_check: bool = True):
         self.model = model
 
         self.vggish = Vggish().to(device)
@@ -182,7 +186,7 @@ class Inference:
 
         # Preprocess
         with torch.autocast("cuda"):
-            output: VAEOutput = self.model(im, mean=None, logvar=None, z=None, in_spec=None)
+            output: VAEOutput = self.model(im, mean=None, logvar=None, z=None, in_spec=None, check=self.do_sanity_check)
         out = output.out
         kl_loss = output.kl_loss
         out_spec = output.out_spec
@@ -195,21 +199,19 @@ class Inference:
             assert out.shape == (B, C, T), f"Expected {(B, C, T)}, got {out.shape}"
 
         target_spec = self.model._preprocess(target[:, None], check=False)[0]
+
         losses = {}
         t_features = self.vggish((target, self.sr)).flatten(-2, -1)
         s_features = self.vggish((out, self.sr)).flatten(-2, -1)
         with torch.autocast("cuda"):
             perceptual_loss = F.mse_loss(t_features, s_features)
-            if self.config.recon_loss == 'spec':
-                recon_loss = F.mse_loss(out_spec, target_spec)
-            elif self.config.recon_loss == 'l2':
-                recon_loss = F.mse_loss(out, target)
-            else:
-                recon_loss = F.mse_loss(out, target) + F.mse_loss(out_spec, target_spec)
+            l2_loss = F.mse_loss(target, out)
+            spec_recon_loss = F.mse_loss(target_spec, out_spec)
 
         dgz = self.discriminator(s_features)
 
-        losses['recon_loss'] = recon_loss
+        losses['recon_loss'] = l2_loss
+        losses['spec_recon_loss'] = spec_recon_loss
         losses['perceptual_loss'] = perceptual_loss
         losses['kl_loss'] = kl_loss
 
@@ -238,7 +240,7 @@ class Inference:
         # Preprocess
         with torch.no_grad():
             with torch.autocast("cuda"):
-                output: VAEOutput = self.model(im, mean=None, logvar=None, z=None)
+                output: VAEOutput = self.model(im, mean=None, logvar=None, z=None, in_spec=None, check=self.do_sanity_check)
         out = output.out
         assert out is not None
 
@@ -356,10 +358,15 @@ def train(config: Config):
     for epoch in range(config.epochs):
         optimizer_g.zero_grad()
         for im in tqdm(train_dl, desc=f'Epoch {epoch + 1}/{config.epochs}'):
+            # Do some bookkeeping
             step_count += 1
 
             if step_count % config.save_steps == 0:
                 save_model(inference, config.output_dir, step_count)
+
+            t = time.time()
+            if step_count >= config.turn_off_checking_steps:
+                inference.do_sanity_check = False
 
             # Hard code to be one step of discriminator for every step of generator
             is_train_discriminator = step_count >= config.disc_start and step_count % 2 == 0
@@ -370,15 +377,17 @@ def train(config: Config):
                 optimizer_d.step()
 
                 wandb.log({
-                    "Discriminator Loss": d_loss.item()
+                    "Discriminator Loss": d_loss.item(),
+                    "Time": time.time() - t
                 }, step=step_count)
             else:
-
                 _, loss = inference.generator_round(im[:, :-1], im[:, -1])
                 g_loss = (
                     loss['recon_loss'] +
                     loss['kl_loss'] * config.kl_weight +
-                    loss['perceptual_loss'] * config.perceptual_weight
+                    loss['perceptual_loss'] * config.perceptual_weight +
+                    loss['gen_loss'] * config.gen_weight +
+                    loss['spec_recon_loss'] * config.spec_weight
                 )
 
                 accelerator.backward(g_loss)
@@ -387,7 +396,10 @@ def train(config: Config):
                 wandb.log({
                     "Reconstruction Loss": loss['recon_loss'].item(),
                     "Perceptual Loss": loss['perceptual_loss'].item(),
-                    "KL Loss": loss['kl_loss'].item()
+                    "KL Loss": loss['kl_loss'].item(),
+                    "Generator Loss": loss['gen_loss'].item(),
+                    "Spectrogram Reconstruction Loss": loss['spec_recon_loss'].item(),
+                    "Time": time.time() - t
                 }, step=step_count)
 
             if step_count % config.val_steps == 0:
@@ -396,16 +408,19 @@ def train(config: Config):
                     val_recon_losses = []
                     val_perceptual_losses = []
                     val_kl_losses = []
+                    val_spec_losses = []
                     for val_im in val_dl:
                         _, val_loss = inference.generator_round(val_im[:, :-1], val_im[:, -1])
                         val_recon_losses.append(val_loss['recon_loss'].item())
                         val_perceptual_losses.append(val_loss['perceptual_loss'].item())
                         val_kl_losses.append(val_loss['kl_loss'].item())
+                        val_spec_losses.append(val_loss['spec_recon_loss'].item())
 
                 wandb.log({
                     "Val Reconstruction Loss": np.mean(val_recon_losses),
                     "Val Perceptual Loss": np.mean(val_perceptual_losses),
-                    "Val KL Loss": np.mean(val_kl_losses)
+                    "Val KL Loss": np.mean(val_kl_losses),
+                    "Val Spectrogram Loss": np.mean(val_spec_losses)
                 }, step=step_count)
 
                 print(f"Validation complete: Reconstruction loss: {np.mean(val_recon_losses)}, Perceptual Loss: {np.mean(val_perceptual_losses)}, KL loss: {np.mean(val_kl_losses)}")
