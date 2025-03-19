@@ -1,23 +1,26 @@
 import torch
-TARGET_FEATURES = 256
-NFFT = TARGET_FEATURES * 2 - 1
-HOP_LENGTH = NFFT // 4
+import torchaudio
+from .constants import NFFT, HOP_LENGTH, TARGET_FEATURES, SAMPLE_RATE, TARGET_NFRAMES, TARGET_TIME_FRAMES
 
 
-def spectro(x):
-    *other, length = x.shape
-    x = x.reshape(-1, length)
-    z = torch.stft(x,
-                   n_fft=NFFT,
-                   hop_length=HOP_LENGTH,
-                   window=torch.hann_window(NFFT).to(x),
-                   win_length=NFFT,
-                   normalized=True,
-                   center=True,
-                   return_complex=True,
-                   pad_mode='reflect')
-    _, freqs, frame = z.shape
-    return z.view(*other, freqs, frame)
+def spectro(x: torch.Tensor, check: bool = False):
+    # x shape: (..., T)
+    if check:
+        assert x.shape[-1] == TARGET_NFRAMES, f"Expected {TARGET_NFRAMES}, got {x.shape[-1]}"
+    mel = torchaudio.transforms.MelSpectrogram(
+        sample_rate=SAMPLE_RATE,
+        n_fft=NFFT,
+        hop_length=HOP_LENGTH,
+        n_mels=TARGET_FEATURES,
+        center=False,
+        power=1,
+    )
+
+    xmel = mel(x.squeeze(1)).log1p()
+    if check:
+        assert xmel.shape[-2] == TARGET_FEATURES, f"Expected {TARGET_FEATURES}, got {xmel.shape[-1]}"
+        assert xmel.shape[-1] == TARGET_TIME_FRAMES, f"Expected {TARGET_NFRAMES // HOP_LENGTH}, got {xmel.shape[-1]}"
+    return xmel
 
 
 def ispectro(z, length=None):

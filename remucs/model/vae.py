@@ -346,47 +346,6 @@ class VAE(nn.Module):
     def num_heads(self):
         return self.model_config.num_heads
 
-    @property
-    def nchannels(self):
-        return 1
-
-    @property
-    def cac_channels(self):
-        # Change to 2 if use CAC and the spectrogram is complex
-        return 1
-
-    def _preprocess(self, x: Tensor, check: bool = True):
-        # input shape: (batch, source, channel, time)
-        assert len(x.shape) == 4
-        if check:
-            assert x.shape[1] == self.nsources
-            assert x.shape[2] == self.nchannels
-        Tx = x.shape[-1]
-        z = spectro(x)
-        B, S, C, Fq, T = z.shape
-        x = torch.view_as_real(z).permute(0, 1, 2, 5, 3, 4)
-        x = x.reshape(B, S, C * 2, Fq, T)
-        mean = x.mean(dim=(1, 3, 4), keepdim=True)
-        std = x.std(dim=(1, 3, 4), keepdim=True)
-        x = (x - mean) / (1e-5 + std)
-        x = x.reshape(B, S * C * 2, Fq, T)
-
-        # Output x: (B, S * C*2, F, T)
-        if check:
-            assert x.shape == (B, S * C * 2, Fq, T), f"Expected {(B, S * C * 2, Fq, T)}, got {x.shape}"
-        return x, mean, std, (B, Fq, T, Tx)
-
-    def _postprocess(self, x: Tensor, mean: Tensor, std: Tensor, shapes: tuple, check: bool = True):
-        B, Fq, T, Tx = shapes
-        x = x * std[:, 0] + mean[:, 0]
-        # x shape: (B, C*2, F, T)
-        assert x.shape == (B, self.nchannels * 2, Fq, T), f"Expected {(B, self.nchannels * 2, Fq, T)}, got {x.shape}"
-        # Reverse the process
-        x = x.reshape(B, self.nchannels, 2, Fq, T).permute(0, 1, 3, 4, 2)
-        z = torch.view_as_complex(x.contiguous())
-        x = ispectro(z, length=Tx)
-        return x
-
     def encode(self, x):
         out = self.encoder_conv_in(x)
         for idx, down in enumerate(self.encoder_layers):
