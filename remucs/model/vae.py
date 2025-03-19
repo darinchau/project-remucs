@@ -28,8 +28,6 @@ class VAEConfig:
     """Number of layers in the upsample block."""
     nsources: int
     """Number of stems in the input audio"""
-    nchannels: int
-    """Number of channels in the input audio"""
     norm_channels: int
     """Number of channels in the group normalization layer."""
     num_heads: int
@@ -248,27 +246,14 @@ def _should_compute(x: dict, compute: str) -> bool:
 class VAE(nn.Module):
     def __init__(self, model_config: VAEConfig):
         super().__init__()
-        self.down_channels = model_config.down_channels
-        self.mid_channels = model_config.mid_channels
-        self.down_sample = model_config.down_sample
-        self.num_down_layers = model_config.num_down_layers
-        self.num_mid_layers = model_config.num_mid_layers
-        self.num_up_layers = model_config.num_up_layers
-        self.gradient_checkpointing = model_config.gradient_checkpointing
-        self.kl_mean = model_config.kl_mean
-
-        # Latent Dimension
-        self.nsources = model_config.nsources
-        self.norm_channels = model_config.norm_channels
-        self.num_heads = model_config.num_heads
-        self.nchannels = model_config.nchannels
+        self.model_config = model_config
 
         # Reverse the downsample list to get upsample list
         self.up_sample = list(reversed(self.down_sample))
 
         ##################### Encoder ######################
         # in_channles = source * (C = 2) * 2
-        self.encoder_conv_in = nn.Conv2d(self.nsources * self.nchannels * 2, self.down_channels[0], kernel_size=3, padding=(1, 1))
+        self.encoder_conv_in = nn.Conv2d(self.nsources * self.nchannels * self.cac_channels, self.down_channels[0], kernel_size=3, padding=(1, 1))
 
         # Downblock + Midblock
         self.encoder_layers = nn.ModuleList([])
@@ -316,6 +301,59 @@ class VAE(nn.Module):
         # out_channels = C * 2
         self.decoder_norm_out = nn.GroupNorm(self.norm_channels, self.down_channels[0])
         self.decoder_conv_out = nn.Conv2d(self.down_channels[0], self.nchannels * 2, kernel_size=3, padding=1)
+
+    @property
+    def down_channels(self):
+        return self.model_config.down_channels
+
+    @property
+    def mid_channels(self):
+        return self.model_config.mid_channels
+
+    @property
+    def down_sample(self):
+        return self.model_config.down_sample
+
+    @property
+    def num_down_layers(self):
+        return self.model_config.num_down_layers
+
+    @property
+    def num_mid_layers(self):
+        return self.model_config.num_mid_layers
+
+    @property
+    def num_up_layers(self):
+        return self.model_config.num_up_layers
+
+    @property
+    def gradient_checkpointing(self):
+        return self.model_config.gradient_checkpointing
+
+    @property
+    def kl_mean(self):
+        return self.model_config.kl_mean
+
+    @property
+    def nsources(self):
+        return self.model_config.nsources
+
+    @property
+    def norm_channels(self):
+        return self.model_config.norm_channels
+
+    @property
+    def num_heads(self):
+        return self.model_config.num_heads
+
+    @property
+    def nchannels(self):
+        return 1
+
+    @property
+    def cac_channels(self):
+        # Change to 2 if use CAC and the spectrogram is complex
+        return 1
 
     def _preprocess(self, x: Tensor, check: bool = True):
         # input shape: (batch, source, channel, time)

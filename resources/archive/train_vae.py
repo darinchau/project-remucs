@@ -404,17 +404,21 @@ def train(config: Config):
 
             if step_count % config.val_steps == 0:
                 vae.eval()
+                val_step_count = 0
                 with torch.no_grad():
                     val_recon_losses = []
                     val_perceptual_losses = []
                     val_kl_losses = []
                     val_spec_losses = []
-                    for val_im in val_dl:
+                    for val_im in tqdm(val_dl, desc='Validation...', total=config.val_count):
+                        val_step_count += 1
                         _, val_loss = inference.generator_round(val_im[:, :-1], val_im[:, -1])
                         val_recon_losses.append(val_loss['recon_loss'].item())
                         val_perceptual_losses.append(val_loss['perceptual_loss'].item())
                         val_kl_losses.append(val_loss['kl_loss'].item())
                         val_spec_losses.append(val_loss['spec_recon_loss'].item())
+                        if val_step_count >= config.val_count:
+                            break
 
                 wandb.log({
                     "Val Reconstruction Loss": np.mean(val_recon_losses),
