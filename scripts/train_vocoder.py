@@ -1,121 +1,343 @@
-# Referenced from wavenet_vocoder/train.py
-import matplotlib
-from remucs.constants import TARGET_FEATURES, TARGET_NFRAMES, TARGET_TIME_FRAMES, SAMPLE_RATE
+import argparse
+import itertools
+import os
+import time
+import warnings
+
 import numpy as np
-from glob import glob
-import json
-import random
-from datetime import datetime
-from tqdm import tqdm
-from os.path import dirname, join, expanduser, exists
-from dataclasses import dataclass, field
-import wandb
-from torch.utils.data import DataLoader
-from warnings import warn
-from matplotlib import cm
-import librosa.display
-from nnmnkwii.datasets import FileSourceDataset, FileDataSource
-from nnmnkwii import preprocessing as P
-from torch.utils.data.sampler import Sampler
-from torch.utils import data as data_utils
-import torch.backends.cudnn as cudnn
-from torch import optim
-from torch.nn import functional as F
-from torch import nn
 import torch
-import matplotlib.pyplot as plt
-from docopt import docopt
-import torch.nn as nn
+import torch.multiprocessing as mp
 import torch.nn.functional as F
+import wandb
+from torch.nn.parallel import DistributedDataParallel
+from torch.utils.data import DistributedSampler, DataLoader
+from tqdm import trange
+
+from torch.optim.adamw import AdamW
+
+from remucs.model.vocoder import MelDataset, get_mel_spectrogram, get_dataset_filelist
+from remucs.model.vocoder import (
+    Generator,
+    MultiPeriodDiscriminator,
+    MultiScaleDiscriminator,
+    feature_loss,
+    generator_loss,
+    discriminator_loss,
+    TorchSTFT,
+    scan_checkpoint,
+    load_checkpoint,
+    save_checkpoint,
+    VocoderConfig,
+    build_env,
+)
+
+warnings.simplefilter(action="ignore", category=FutureWarning)
+
+torch.backends.cudnn.benchmark = True
 
 
-matplotlib.use('Agg')
+def _load_checkpoint(
+    args: argparse.Namespace,
+    device: torch.device,
+    generator: Generator,
+    mpd: MultiPeriodDiscriminator,
+    msd: MultiScaleDiscriminator,
+    optim_g: AdamW,
+    optim_d: AdamW,
+):
+    if os.path.isdir(args.checkpoint_path):
+        checkpoint_generator = scan_checkpoint(args.checkpoint_path, "g_")
+        checkpoint_discriminator = scan_checkpoint(args.checkpoint_path, "do_")
+    else:
+        checkpoint_generator, checkpoint_discriminator = None, None
 
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    if checkpoint_generator is None or checkpoint_discriminator is None:
+        state_dict_do = None
+        last_epoch = -1
+        steps = 0
+    else:
+        state_dict_g = load_checkpoint(checkpoint_generator, device)
+        state_dict_do = load_checkpoint(checkpoint_discriminator, device)
+        assert state_dict_do is not None
+        assert state_dict_g is not None
+        generator.load_state_dict(state_dict_g["generator"])
+        mpd.load_state_dict(state_dict_do["mpd"])
+        msd.load_state_dict(state_dict_do["msd"])
+        steps = state_dict_do["steps"] + 1
+        last_epoch = state_dict_do["epoch"]
+        print(f"Continuing training from epoch: {last_epoch} /n Continuing training from steps: {steps}.")
+        optim_g.load_state_dict(state_dict_do["optim_g"])
+        optim_d.load_state_dict(state_dict_do["optim_d"])
 
-
-@dataclass(frozen=True)
-class HParams:
-    sample_rate: int
-    nframes: int  # Target nframes for the unraveled audio
-    in_time_frames: int
-    in_mel_bins: int
-
-    out_channels: int
-    layers: int
-    stacks: int
-    residual_channels: int
-    gate_channels: int
-    skip_out_channels: int
-    cin_channels: int
-    gin_channels: int
-    dropout: float
-    kernel_size: int
-    cin_pad: int
-    upsample_conditional_features: bool
-    upsample_params: dict
-    scalar_input: bool
-    output_distribution: str
-    learning_rate: float
-    max_train_steps: int
-    checkpoint_interval: int
-
-
-class WaveNetVocoder(nn.Module):
-    def __init__(self, mel_bins, num_time_frames, num_audio_samples, num_layers, kernel_size, residual_channels, dilation_channels, skip_channels):
-        super(WaveNetVocoder, self).__init__()
-        self.mel_bins = mel_bins
-        self.num_layers = num_layers
-        self.kernel_size = kernel_size
-        self.num_time_frames = num_time_frames
-        self.num_audio_samples = num_audio_samples
-
-        # Initial causal convolution
-        self.causal_conv = nn.Conv1d(mel_bins, residual_channels, kernel_size=1)
-
-        # Dilated convolutions
-        self.dilated_convs = nn.ModuleList()
-        self.residual_convs = nn.ModuleList()
-        self.skip_convs = nn.ModuleList()
-
-        dilation = 1
-        for i in range(num_layers):
-            self.dilated_convs.append(nn.Conv1d(residual_channels, dilation_channels, kernel_size, dilation=dilation))
-            self.residual_convs.append(nn.Conv1d(dilation_channels, residual_channels, kernel_size=1))
-            self.skip_convs.append(nn.Conv1d(dilation_channels, skip_channels, kernel_size=1))
-            dilation *= 2
-
-        # Post-processing layers
-        self.post_conv1 = nn.Conv1d(skip_channels, skip_channels, kernel_size=1)
-        self.post_conv2 = nn.Conv1d(skip_channels, 1, kernel_size=1)
-
-    def forward(self, x):
-        # x = x.permute(0, 2, 1)  # Change to (B, time_frames, mel_bins)
-        x = self.causal_conv(x)
-
-        skip_connections = []
-
-        for dil_conv, res_conv, skip_conv in zip(self.dilated_convs, self.residual_convs, self.skip_convs):
-            filtered = dil_conv(x)
-            filtered = torch.tanh(filtered)
-            skip = skip_conv(filtered)
-            skip_connections.append(skip)
-
-            residual = res_conv(filtered)
-            x = x + residual
-
-        x = torch.sum(torch.stack(skip_connections), dim=0)
-        x = F.tanh(x)
-        x = self.post_conv1(x)
-        x = F.tanh(x)
-        x = self.post_conv2(x)
-
-        return x.squeeze(1)
+    return generator, mpd, msd, optim_g, optim_d, steps, last_epoch
 
 
-def main(hparams_path: str):
-    raise NotImplementedError("This script is not yet implemented")
+def _save_checkpoint(
+    args: argparse.Namespace,
+    generator: Generator,
+    config: VocoderConfig,
+    steps: int,
+    mpd: MultiPeriodDiscriminator,
+    msd: MultiScaleDiscriminator,
+    optim_g: AdamW,
+    optim_d: AdamW,
+    epoch: int,
+):
+    checkpoint_path = f"{args.checkpoint_path}/g_{steps:08d}"
+    save_checkpoint(
+        checkpoint_path, {"generator": (generator.module if config.num_gpus > 1 else generator).state_dict()}
+    )
+    checkpoint_path = f"{args.checkpoint_path}/do_{steps:08d}"
+    save_checkpoint(
+        checkpoint_path,
+        {
+            "mpd": (mpd.module if config.num_gpus > 1 else mpd).state_dict(),
+            "msd": (msd.module if config.num_gpus > 1 else msd).state_dict(),
+            "optim_g": optim_g.state_dict(),
+            "optim_d": optim_d.state_dict(),
+            "steps": steps,
+            "epoch": epoch,
+        },
+    )
+
+
+@torch.no_grad()
+def loss_logging(
+    y_mel: torch.Tensor, y_g_hat_mel: torch.Tensor, loss_gen_all: torch.Tensor, steps: int, start_b: float
+):
+    mel_error = F.l1_loss(y_mel, y_g_hat_mel).item()
+    wandb.log({"train_loss/gen_total_loss": loss_gen_all})
+    wandb.log({"train_loss/mel_error": mel_error})
+
+    print(
+        f"Steps : {steps}, Gen Loss Total : {np.round(loss_gen_all.item(), 3)}, "
+        f"Mel-Spec. Error : {np.round(mel_error, 3)}, s/b : {time.time() - start_b}"
+    )
+
+
+@torch.no_grad()
+def validation(generator, validation_loader, device, config, steps, args, stft):
+    generator.eval()
+    torch.cuda.empty_cache()
+    val_err_tot = 0
+    val_length = -1
+    for j, batch in enumerate(validation_loader):
+        val_length = j
+        x, y, _, y_mel = batch
+        spec, phase = generator(x.to(device))
+        y_g_hat = stft.inverse(spec, phase)
+        y_mel = y_mel.to(device)
+        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **config)
+        val_err_tot += F.l1_loss(y_mel, y_g_hat_mel).item()
+
+        if steps == 0:
+            wandb.log(
+                {
+                    f"audio/{j}_gt": wandb.Audio(
+                        y[0].detach().cpu().numpy(), caption=f"audio/{j}_gt", sample_rate=config.sampling_rate
+                    )
+                }
+            )
+        if steps % args.log_audio_interval == 0:
+            wandb.log(
+                {
+                    f"audio/{j}_generated": wandb.Audio(
+                        y_g_hat[0].squeeze(0).detach().cpu().numpy(),
+                        caption=f"audio/{j}_generated",
+                        sample_rate=config.sampling_rate,
+                    )
+                }
+            )
+
+    val_err = val_err_tot / (val_length + 1)  # If the loop is not entered, this will divide by 0 because why not
+    wandb.log({"val_loss/mel_error": val_err})
+
+
+def _log_checkpoint_info(generator, args):
+    print(generator)
+    os.makedirs(args.checkpoint_path, exist_ok=True)
+    print(f"checkpoints directory : {args.checkpoint_path}")
+
+
+def _init_models(config, device):
+    generator = Generator(config).to(device)
+    mpd = MultiPeriodDiscriminator(config.discriminator_periods).to(device)
+    msd = MultiScaleDiscriminator().to(device)
+    stft = TorchSTFT(**config).to(device)
+    optim_g = AdamW(generator.parameters(), config.learning_rate, betas=(config.adam_b1, config.adam_b2))
+    optim_d = AdamW(
+        itertools.chain(msd.parameters(), mpd.parameters()),
+        config.learning_rate,
+        betas=(config.adam_b1, config.adam_b2),
+    )
+    return generator, mpd, msd, stft, optim_g, optim_d
+
+
+def distributed_cover(generator, mpd, msd, device, rank):
+    generator = DistributedDataParallel(generator, device_ids=[rank]).to(device)
+    mpd = DistributedDataParallel(mpd, device_ids=[rank]).to(device)
+    msd = DistributedDataParallel(msd, device_ids=[rank]).to(device)
+    return generator, mpd, msd
+
+
+def _init_schedulers(optim_g, optim_d, config, last_epoch):
+    scheduler_g = torch.optim.lr_scheduler.ExponentialLR(optim_g, gamma=config.lr_decay, last_epoch=last_epoch)
+    scheduler_d = torch.optim.lr_scheduler.ExponentialLR(optim_d, gamma=config.lr_decay, last_epoch=last_epoch)
+    return scheduler_g, scheduler_d
+
+
+def _init_dataloader(fileset, num_workers, shuffle, sampler, batch_size):
+    loader = DataLoader(
+        fileset,
+        num_workers=num_workers,
+        shuffle=shuffle,
+        sampler=sampler,
+        batch_size=batch_size,
+        pin_memory=True,
+        drop_last=True,
+    )
+    return loader
+
+
+def _get_dataloaders(args, device, config, rank):
+    training_filelist, validation_filelist = get_dataset_filelist(args)
+    train_set = MelDataset(training_filelist, device=device, **config)
+    train_sampler = DistributedSampler(train_set) if config.num_gpus > 1 else None
+    train_shuffle = False if config.num_gpus > 1 else True
+    train_loader = _init_dataloader(train_set, config.num_workers, train_shuffle, train_sampler, config.batch_size)
+    if rank == 0:
+        val_set = MelDataset(validation_filelist, split=False, shuffle=False, **config)
+        validation_loader = _init_dataloader(val_set, 1, False, None, 1)
+        wandb.init(project=config["wandb"]["project"])
+    else:
+        validation_loader = None
+    return train_sampler, train_loader, validation_loader
+
+
+def _setup_rank_train(config, rank, args, device):
+    torch.cuda.manual_seed(config.seed)
+    generator, mpd, msd, stft, optim_g, optim_d = _init_models(config, device)
+    if rank == 0:
+        _log_checkpoint_info(generator, args)
+    generator, mpd, msd, optim_g, optim_d, steps, last_epoch = _load_checkpoint(
+        args, device, generator, mpd, msd, optim_g, optim_d
+    )
+    if config.num_gpus > 1:
+        # configure_env_for_dist_training(config, rank)
+        # generator, mpd, msd = distributed_cover(generator, mpd, msd, device, rank)
+        raise NotImplementedError("Distributed training is not supported")
+    generator.train()
+    mpd.train()
+    msd.train()
+    return generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps
+
+
+def _generation_step(batch, device, config, stft, generator):
+    x, y, _, y_mel = batch
+    x = x.to(device)
+    y = y.to(device)
+    y_mel = y_mel.to(device)
+    y = y.unsqueeze(1)
+    spec, phase = generator(x)
+    y_g_hat = stft.inverse(spec, phase)
+    y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **config)
+    return y, y_g_hat, y_mel, y_g_hat_mel
+
+
+def _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim_g):
+    optim_d.zero_grad()
+    y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
+    loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
+    y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
+    loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
+    loss_disc_all = loss_disc_s + loss_disc_f
+    loss_disc_all.backward()
+    optim_d.step()
+    optim_g.zero_grad()
+    loss_mel = F.l1_loss(y_mel, y_g_hat_mel) * 45
+    y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
+    y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
+    loss_fm_f = config.fm_scale_factor * feature_loss(fmap_f_r, fmap_f_g)
+    loss_fm_s = config.fm_scale_factor * feature_loss(fmap_s_r, fmap_s_g)
+    loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
+    loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
+    loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel
+    return loss_gen_all
+
+
+def train(rank, args: argparse.Namespace, config: VocoderConfig):
+    device = torch.device(f"cuda:{rank}")
+    generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps = _setup_rank_train(config, rank, args, device)
+    scheduler_g, scheduler_d = _init_schedulers(optim_g, optim_d, config, last_epoch)
+    train_sampler, train_loader, validation_loader = _get_dataloaders(args, device, config, rank)
+    for epoch in trange(max(0, last_epoch), args.training_epochs):
+        if rank == 0:
+            start = time.time()
+            print(f"Epoch: {epoch + 1}")
+        if config.num_gpus > 1:
+            # train_sampler.set_epoch(epoch)
+            raise NotImplementedError("Distributed training is not supported")
+        for i, batch in enumerate(train_loader):
+            if rank == 0:
+                start_b = time.time()
+            y, y_g_hat, y_mel, y_g_hat_mel = _generation_step(batch, device, config, stft, generator)
+            loss_gen_all = _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim_g)
+            loss_gen_all.backward()
+            optim_g.step()
+            if rank == 0:
+                if steps % args.wandb_log_interval == 0:
+                    loss_logging(y_mel, y_g_hat_mel, loss_gen_all, steps, start_b)  # type: ignore
+                if steps % args.checkpoint_interval == 0 and steps != 0:
+                    _save_checkpoint(args, generator, config, steps, mpd, msd, optim_g, optim_d, epoch)
+                if steps % args.validation_interval == 0:
+                    validation(generator, validation_loader, device, config, steps, args, stft)
+                    generator.train()
+            steps += 1
+        scheduler_g.step()
+        scheduler_d.step()
+        if rank == 0:
+            print(f"Time taken for epoch {epoch + 1} is {int(time.time() - start)} sec\n")  # type: ignore
+
+
+def main():
+    print("Initializing Training Process...")
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-c", "--config_path", help="path to config/config.json")
+    parser.add_argument("--input_training_file", type=str)
+    parser.add_argument("--input_validation_file", type=str)
+    parser.add_argument("--input_mels_dir", default="")
+    parser.add_argument("--fine_tuning", default=False, type=bool)
+    parser.add_argument("--checkpoint_path", default="/app/new_checkpoints")
+    parser.add_argument("--training_epochs", default=1, type=int)
+    parser.add_argument("--wandb_log_interval", default=1, type=int, help="Once per n steps")
+    parser.add_argument("--checkpoint_interval", default=1, type=int, help="Once per n steps")
+    parser.add_argument("--log_audio_interval", default=1, type=int, help="Once per n steps")
+    parser.add_argument("--validation_interval", default=1, type=int, help="Once per n steps")
+
+    args = parser.parse_args()
+    config = VocoderConfig.load(args.config_path)
+    build_env(args.config_path, args.checkpoint_path)
+
+    torch.manual_seed(config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed(config.seed)
+        config.num_gpus = torch.cuda.device_count()
+        config.batch_size = config.batch_size // config.num_gpus
+        print(f"Batch size per GPU : {config.batch_size}")
+
+    if config.num_gpus > 1:
+        mp.spawn(  # type: ignore
+            train,
+            nprocs=config.num_gpus,
+            args=(
+                args,
+                config,
+            ),
+        )
+    else:
+        train(0, args, config)
 
 
 if __name__ == "__main__":
-    main("wavenet_vocoder/egs/mol/conf/mol_wavenet_demo.json")
+    main()
