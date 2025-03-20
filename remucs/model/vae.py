@@ -346,6 +346,14 @@ class VAE(nn.Module):
     def num_heads(self):
         return self.model_config.num_heads
 
+    @property
+    def nchannels(self):
+        return 1
+
+    @property
+    def cac_channels(self):
+        return 2
+
     def encode(self, x):
         out = self.encoder_conv_in(x)
         for idx, down in enumerate(self.encoder_layers):
@@ -376,6 +384,12 @@ class VAE(nn.Module):
         out = nn.SiLU()(out)
         out = self.decoder_conv_out(out)
         return out
+
+    def _preprocess(self, x: Tensor, check: bool = True):
+        raise NotImplementedError
+
+    def _postprocess(self, x: Tensor, mean: Tensor, std: Tensor, shapes: tuple, check: bool = True):
+        raise NotImplementedError
 
     def forward(self, x, check=True, **kwargs) -> VAEOutput:
         """Specify in the kwargs x=None to not return x. For example, forward(x, mean=None)"""
@@ -423,7 +437,6 @@ def read_config(config_path: str):
                 num_mid_layers=config["num_mid_layers"],
                 num_up_layers=config["num_up_layers"],
                 nsources=config["nsources"],
-                nchannels=config["nchannels"],
                 norm_channels=config["norm_channels"],
                 num_heads=config["num_heads"],
                 gradient_checkpointing=config["gradient_checkpointing"],
