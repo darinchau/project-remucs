@@ -203,16 +203,15 @@ def _init_dataloader(fileset, num_workers, shuffle, sampler, batch_size):
 def _get_dataloaders(args, device, config: VocoderConfig):
     train_wavs, val_wavs = get_dataset_filelist(args)
     train_set = MelDataset(train_wavs, device=device, **asdict(config))
-    train_sampler = None
     train_shuffle = True
-    train_loader = _init_dataloader(train_set, config.num_workers, train_shuffle, train_sampler, config.batch_size)
-    val_set = MelDataset(val_wavs, split=False, shuffle=False, **asdict(config))
+    train_loader = _init_dataloader(train_set, config.num_workers, train_shuffle, None, config.batch_size)
+    val_set = MelDataset(val_wavs, device=device, **asdict(config))
     validation_loader = _init_dataloader(val_set, 0, False, None, 1)
     wandb.init(
         project=config.wandb.project,
         config=asdict(config),
     )
-    return train_sampler, train_loader, validation_loader
+    return train_loader, validation_loader
 
 
 def _setup_rank_train(config, args, device):
@@ -228,7 +227,7 @@ def _setup_rank_train(config, args, device):
     return generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps
 
 
-def _generation_step(batch, device, config, stft, generator):
+def _generation_step(batch, device, config, stft: TorchSTFT, generator):
     x, y, _, y_mel = batch
     x = x.to(device)
     y = y.to(device)
@@ -236,8 +235,11 @@ def _generation_step(batch, device, config, stft, generator):
     y = y.unsqueeze(1)
     with torch.autocast("cuda"):
         spec, phase = generator(x)
-        y_g_hat = stft.inverse(spec, phase)
-        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
+    y_g_hat = stft.inverse(spec, phase)
+    y_g_hat_mel = get_mel_spectrogram(
+        y_g_hat.squeeze(1),
+        **asdict(config)
+    )
     return y, y_g_hat, y_mel, y_g_hat_mel
 
 
@@ -269,7 +271,7 @@ def train(args: argparse.Namespace, config: VocoderConfig):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps = _setup_rank_train(config, args, device)
     scheduler_g, scheduler_d = _init_schedulers(optim_g, optim_d, config, last_epoch)
-    _, train_loader, validation_loader = _get_dataloaders(args, device, config)
+    train_loader, validation_loader = _get_dataloaders(args, device, config)
     for epoch in trange(max(0, last_epoch), args.training_epochs):
         start = time.time()
         for i, batch in tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch + 1}"):
@@ -296,7 +298,7 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config_path", help="path to config/config.json", default="./resources/config/vocoder.json")
-    parser.add_argument("--datapath", type=str, help="Path to the wav files", default="D:/audio-dataset-v3")
+    parser.add_argument("--datapath", type=str, help="Path to the wav files", required=True)
     parser.add_argument("--checkpoint_path", default="./resources/new_checkpoints")
     parser.add_argument("--training_epochs", default=1, type=int)
     parser.add_argument("--wandb_log_interval", default=1, type=int, help="Once per n steps")

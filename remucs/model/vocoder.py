@@ -151,7 +151,8 @@ class TorchSTFT(torch.nn.Module):
         self.hop_length = istft_hop_length
         self.win_length = istft_filter_length
         self.filter_length = istft_filter_length
-        self.window = torch.from_numpy(get_window(window, istft_filter_length, fftbins=True).astype(np.float32))
+        w = torch.from_numpy(get_window(window, istft_filter_length, fftbins=True).astype(np.float32))
+        self.register_buffer("window", w)
 
     def transform(self, input_data: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
         forward_transform = torch.stft(
@@ -160,12 +161,14 @@ class TorchSTFT(torch.nn.Module):
         return torch.abs(forward_transform), torch.angle(forward_transform)
 
     def inverse(self, magnitude: torch.Tensor, phase: torch.Tensor) -> torch.Tensor:
+        magnitude = magnitude.to(torch.float32)
+        phase = phase.to(torch.float32)
         inverse_transform = torch.istft(
-            magnitude * torch.exp(phase * 1j),
+            torch.polar(magnitude, phase),
             self.filter_length,
             self.hop_length,
             self.win_length,
-            window=self.window.to(magnitude.device),
+            window=self.window,
         )
         return inverse_transform.unsqueeze(-2)  # unsqueeze to stay consistent with conv_transpose1d implementation
 
@@ -535,7 +538,6 @@ class MelDataset(Dataset):
         split=True,
         device=None,
         fmax_loss=None,
-        fine_tuning=False,
         input_mels_dir=None,
         **kwargs,
     ):
@@ -549,7 +551,6 @@ class MelDataset(Dataset):
         self.hop_size = hop_size
         self.win_size = win_size
         self.fmax_loss = fmax_loss
-        self.fine_tuning = fine_tuning
         self.audio_files = training_files
         self.segment_size = segment_size
         self.sampling_rate = sampling_rate
@@ -558,32 +559,30 @@ class MelDataset(Dataset):
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor, str, torch.Tensor]:
         filename = self.audio_files[index]
-        audio = Audio.load(filename).resample(self.sampling_rate).to_nchannels(1)
+        audio = Audio.load(filename)
+        audio = audio.resample(self.sampling_rate).to_nchannels(1)
 
-        if not self.fine_tuning:
-            if self.split:
-                if audio.nframes >= self.segment_size:
-                    max_audio_start = audio.nframes - self.segment_size
-                    audio_start = random.randint(0, max_audio_start)
-                    audio = audio.slice_frames(audio_start, audio_start + self.segment_size)
-                else:
-                    audio = audio.pad(target=self.segment_size, front=False)
+        if self.split:
+            if audio.nframes >= self.segment_size:
+                max_audio_start = audio.nframes - self.segment_size
+                audio_start = random.randint(0, max_audio_start)
+                audio = audio.slice_frames(audio_start, audio_start + self.segment_size)
+            else:
+                audio = audio.pad(target=self.segment_size, front=False)
 
-            audio = audio.data
+        audio = audio.data
 
-            mel = get_mel_spectrogram(
-                audio,
-                self.n_fft,
-                self.num_mels,
-                self.sampling_rate,
-                self.hop_size,
-                self.win_size,
-                self.fmin,
-                self.fmax,
-                center=False,
-            )
-        else:
-            raise NotImplementedError("Fine tuning not implemented (yet)")
+        mel = get_mel_spectrogram(
+            audio,
+            self.n_fft,
+            self.num_mels,
+            self.sampling_rate,
+            self.hop_size,
+            self.win_size,
+            self.fmin,
+            self.fmax,
+            center=False,
+        )
 
         mel_loss = get_mel_spectrogram(
             audio,
