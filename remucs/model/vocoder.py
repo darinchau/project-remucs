@@ -29,6 +29,8 @@ from dataclasses import dataclass
 from AutoMasher.fyp import Audio, SongDataset
 from remucs.constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE
 
+from functools import reduce
+
 import logging
 logger = logging.getLogger(__name__)
 logger.addHandler(logging.NullHandler())  # Shut up
@@ -266,8 +268,10 @@ class Generator(torch.nn.Module):
         super(Generator, self).__init__()
         self.num_kernels = len(config.resblock_kernel_sizes)
         self.num_upsamples = len(config.upsample_rates)
-        self.conv_pre = weight_norm(Conv1d(80, config.upsample_initial_channel, 7, 1, padding=3))
+        self.conv_pre = weight_norm(Conv1d(config.num_mels, config.upsample_initial_channel, 7, 1, padding=3))
         resblock = ResBlock1 if config.resblock == "1" else ResBlock2
+
+        # assert config.hop_size == reduce(lambda x, y: x * y, config.upsample_rates), "Hop size must be product of upsample rates"
 
         self.ups = nn.ModuleList()
         for i, (u, k) in enumerate(zip(config.upsample_rates, config.upsample_kernel_sizes)):
@@ -282,6 +286,7 @@ class Generator(torch.nn.Module):
                     )
                 )
             )
+            last_ch = config.upsample_initial_channel // (2 ** (i + 1))
 
         self.resblocks = nn.ModuleList()
         for i in range(len(self.ups)):
@@ -306,12 +311,11 @@ class Generator(torch.nn.Module):
                 else:
                     xs += self.resblocks[i * self.num_kernels + j](x)  # type: ignore
             x = xs / self.num_kernels  # type: ignore
-        x = F.leaky_relu(x)
+        x = F.leaky_relu(x, LRELU_SLOPE)
         x = self.reflection_pad(x)
         x = self.conv_post(x)
         spec = torch.exp(x[:, : self.post_n_fft // 2 + 1, :])
         phase = torch.sin(x[:, self.post_n_fft // 2 + 1:, :])
-
         return spec, phase
 
     def remove_weight_norm(self):
@@ -329,16 +333,14 @@ class DiscriminatorP(torch.nn.Module):
         super(DiscriminatorP, self).__init__()
         self.period = period
         norm_f = weight_norm if not use_spectral_norm else spectral_norm
-        self.convs = nn.ModuleList(
-            [
-                norm_f(Conv2d(1, 32, (kernel_size, 1), (stride, 1), padding=(get_padding(5, 1), 0))),
-                norm_f(Conv2d(32, 128, (kernel_size, 1), (stride, 1), padding=(get_padding(5, 1), 0))),
-                norm_f(Conv2d(128, 512, (kernel_size, 1), (stride, 1), padding=(get_padding(5, 1), 0))),
-                norm_f(Conv2d(512, 1024, (kernel_size, 1), (stride, 1), padding=(get_padding(5, 1), 0))),
-                norm_f(Conv2d(1024, 1024, (kernel_size, 1), 1, padding=(2, 0))),
-            ]
-        )
-        self.conv_post = norm_f(Conv2d(1024, 1, (3, 1), 1, padding=(1, 0)))
+        channels = [1, 32, 64, 128, 256]
+        self.convs = nn.ModuleList([
+            norm_f(Conv2d(channels[i-1], channels[i], (kernel_size, 1), stride, padding=(get_padding(5, 1), 0)))
+            for i in range(1, len(channels))
+        ] + [
+            norm_f(Conv2d(channels[-1], channels[-1], (kernel_size, 1), 1, padding=(2, 0))),
+        ])  # type: ignore
+        self.conv_post = norm_f(Conv2d(channels[-1], 1, (3, 1), 1, padding=(1, 0)))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
         fmap = []
@@ -385,18 +387,14 @@ class DiscriminatorS(torch.nn.Module):
     def __init__(self, use_spectral_norm=False):
         super(DiscriminatorS, self).__init__()
         norm_f = weight_norm if not use_spectral_norm else spectral_norm
-        self.convs = nn.ModuleList(
-            [
-                norm_f(Conv1d(1, 128, 15, 1, padding=7)),
-                norm_f(Conv1d(128, 128, 41, 2, groups=4, padding=20)),
-                norm_f(Conv1d(128, 256, 41, 2, groups=16, padding=20)),
-                norm_f(Conv1d(256, 512, 41, 4, groups=16, padding=20)),
-                norm_f(Conv1d(512, 1024, 41, 4, groups=16, padding=20)),
-                norm_f(Conv1d(1024, 1024, 41, 1, groups=16, padding=20)),
-                norm_f(Conv1d(1024, 1024, 5, 1, padding=2)),
-            ]
-        )
-        self.conv_post = norm_f(Conv1d(1024, 1, 3, 1, padding=1))
+        channels = [1, 16, 16, 32, 64, 128, 128]
+        convs = [
+            Conv1d(channels[i-1], channels[i], 41, 2, groups=16, padding=20)
+            for i in range(2, len(channels))
+        ]
+        convs = [Conv1d(channels[0], channels[1], 15, 1, padding=7)] + convs + [Conv1d(channels[-1], channels[-1], 5, 1, padding=2)]
+        self.convs = nn.ModuleList(convs)
+        self.conv_post = norm_f(Conv1d(channels[-1], 1, 3, 1, padding=1))
 
     def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, list[torch.Tensor]]:
         fmap = []

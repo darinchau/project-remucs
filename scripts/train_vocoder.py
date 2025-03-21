@@ -110,7 +110,7 @@ def loss_logging(
     wandb.log({"train_loss/gen_total_loss": loss_gen_all})
     wandb.log({"train_loss/mel_error": mel_error})
 
-    print(
+    tqdm.write(
         f"Steps : {steps}, Gen Loss Total : {np.round(loss_gen_all.item(), 3)}, "
         f"Mel-Spec. Error : {np.round(mel_error, 3)}, s/b : {time.time() - start_b}"
     )
@@ -122,33 +122,37 @@ def validation(generator, validation_loader, device, config, steps, args, stft):
     torch.cuda.empty_cache()
     val_err_tot = 0
     val_length = -1
-    for j, batch in enumerate(validation_loader):
+    num_val_steps = 10
+    for j, batch in tqdm(enumerate(validation_loader), total=len(validation_loader), desc="Validation"):
         val_length = j
         x, y, _, y_mel = batch
-        spec, phase = generator(x.to(device))
-        y_g_hat = stft.inverse(spec, phase)
-        y_mel = y_mel.to(device)
-        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
-        val_err_tot += F.l1_loss(y_mel, y_g_hat_mel).item()
+        with torch.autocast("cuda"):
+            spec, phase = generator(x.to(device))
+            y_g_hat = stft.inverse(spec, phase)
+            y_mel = y_mel.to(device)
+            y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
+            val_err_tot += F.l1_loss(y_mel, y_g_hat_mel).item()
+        if j >= num_val_steps:
+            break
 
-        if steps == 0:
-            wandb.log(
-                {
-                    f"audio/{j}_gt": wandb.Audio(
-                        y[0].detach().cpu().numpy(), caption=f"audio/{j}_gt", sample_rate=config.sampling_rate
-                    )
-                }
-            )
-        if steps % args.log_audio_interval == 0:
-            wandb.log(
-                {
-                    f"audio/{j}_generated": wandb.Audio(
-                        y_g_hat[0].squeeze(0).detach().cpu().numpy(),
-                        caption=f"audio/{j}_generated",
-                        sample_rate=config.sampling_rate,
-                    )
-                }
-            )
+        # if steps == 0:
+        #     wandb.log(
+        #         {
+        #             f"audio/{j}_gt": wandb.Audio(
+        #                 y[0].detach().cpu().numpy(), caption=f"audio/{j}_gt", sample_rate=config.sampling_rate
+        #             )
+        #         }
+        #     )
+        # if steps % args.log_audio_interval == 0:
+        #     wandb.log(
+        #         {
+        #             f"audio/{j}_generated": wandb.Audio(
+        #                 y_g_hat[0].squeeze(0).detach().cpu().numpy(),
+        #                 caption=f"audio/{j}_generated",
+        #                 sample_rate=config.sampling_rate,
+        #             )
+        #         }
+        #     )
 
     val_err = val_err_tot / (val_length + 1)  # If the loop is not entered, this will divide by 0 because why not
     wandb.log({"val_loss/mel_error": val_err})
@@ -230,30 +234,34 @@ def _generation_step(batch, device, config, stft, generator):
     y = y.to(device)
     y_mel = y_mel.to(device)
     y = y.unsqueeze(1)
-    spec, phase = generator(x)
-    y_g_hat = stft.inverse(spec, phase)
-    y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
+    with torch.autocast("cuda"):
+        spec, phase = generator(x)
+        y_g_hat = stft.inverse(spec, phase)
+        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
     return y, y_g_hat, y_mel, y_g_hat_mel
 
 
 def _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim_g):
     optim_d.zero_grad()
-    y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
-    loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
-    y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
-    loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
-    loss_disc_all = loss_disc_s + loss_disc_f
+    with torch.autocast("cuda"):
+        y_df_hat_r, y_df_hat_g, _, _ = mpd(y, y_g_hat.detach())
+        loss_disc_f, losses_disc_f_r, losses_disc_f_g = discriminator_loss(y_df_hat_r, y_df_hat_g)
+        y_ds_hat_r, y_ds_hat_g, _, _ = msd(y, y_g_hat.detach())
+        loss_disc_s, losses_disc_s_r, losses_disc_s_g = discriminator_loss(y_ds_hat_r, y_ds_hat_g)
+        loss_disc_all = loss_disc_s + loss_disc_f
     loss_disc_all.backward()
     optim_d.step()
     optim_g.zero_grad()
-    loss_mel = F.l1_loss(y_mel, y_g_hat_mel) * 45
-    y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
-    y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
-    loss_fm_f = config.fm_scale_factor * feature_loss(fmap_f_r, fmap_f_g)
-    loss_fm_s = config.fm_scale_factor * feature_loss(fmap_s_r, fmap_s_g)
-    loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
-    loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
-    loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel
+
+    with torch.autocast("cuda"):
+        loss_mel = F.l1_loss(y_mel, y_g_hat_mel) * 45
+        y_df_hat_r, y_df_hat_g, fmap_f_r, fmap_f_g = mpd(y, y_g_hat)
+        y_ds_hat_r, y_ds_hat_g, fmap_s_r, fmap_s_g = msd(y, y_g_hat)
+        loss_fm_f = config.fm_scale_factor * feature_loss(fmap_f_r, fmap_f_g)
+        loss_fm_s = config.fm_scale_factor * feature_loss(fmap_s_r, fmap_s_g)
+        loss_gen_f, losses_gen_f = generator_loss(y_df_hat_g)
+        loss_gen_s, losses_gen_s = generator_loss(y_ds_hat_g)
+        loss_gen_all = loss_gen_s + loss_gen_f + loss_fm_s + loss_fm_f + loss_mel
     return loss_gen_all
 
 
@@ -274,7 +282,7 @@ def train(args: argparse.Namespace, config: VocoderConfig):
                 loss_logging(y_mel, y_g_hat_mel, loss_gen_all, steps, start_b)  # type: ignore
             if steps % args.checkpoint_interval == 0 and steps != 0:
                 _save_checkpoint(args, generator, config, steps, mpd, msd, optim_g, optim_d, epoch)
-            if steps % args.validation_interval == 0:
+            if steps % args.validation_interval == 0 and steps != 0:
                 validation(generator, validation_loader, device, config, steps, args, stft)
                 generator.train()
             steps += 1
@@ -288,13 +296,13 @@ def main():
 
     parser = argparse.ArgumentParser()
     parser.add_argument("-c", "--config_path", help="path to config/config.json", default="./resources/config/vocoder.json")
-    parser.add_argument("--datapath", type=str, help="Path to the wav files")
-    parser.add_argument("--checkpoint_path", default="/app/new_checkpoints")
+    parser.add_argument("--datapath", type=str, help="Path to the wav files", default="D:/audio-dataset-v3")
+    parser.add_argument("--checkpoint_path", default="./resources/new_checkpoints")
     parser.add_argument("--training_epochs", default=1, type=int)
     parser.add_argument("--wandb_log_interval", default=1, type=int, help="Once per n steps")
-    parser.add_argument("--checkpoint_interval", default=1, type=int, help="Once per n steps")
-    parser.add_argument("--log_audio_interval", default=1, type=int, help="Once per n steps")
-    parser.add_argument("--validation_interval", default=1, type=int, help="Once per n steps")
+    parser.add_argument("--checkpoint_interval", default=128, type=int, help="Once per n steps")
+    parser.add_argument("--log_audio_interval", default=1024, type=int, help="Once per n steps")
+    parser.add_argument("--validation_interval", default=1024, type=int, help="Once per n steps")
 
     args = parser.parse_args()
     config = VocoderConfig.load(args.config_path)

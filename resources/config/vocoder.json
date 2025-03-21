@@ -39,7 +39,7 @@
         ]
     ],
     "istft_filter_length": 16,
-    "istft_hop_length": 4,
+    "istft_hop_length": 8,
     "discriminator_periods": [
         2,
         3,
@@ -47,14 +47,14 @@
         7,
         11
     ],
-    "segment_size": 8192,
-    "num_mels": 80,
-    "n_fft": 1024,
-    "hop_size": 256,
-    "win_size": 1024,
-    "sampling_rate": 22050,
-    "fmin": 0,
-    "fmax": 8000,
+    "segment_size": 221184,
+    "num_mels": 128,
+    "n_fft": 2048,
+    "hop_size": 512,
+    "win_size": 2048,
+    "sampling_rate": 44100,
+    "fmin": 30,
+    "fmax": 22050,
     "fm_scale_factor": 2,
     "num_workers": 0,
     "wandb": {
