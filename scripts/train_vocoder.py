@@ -86,14 +86,14 @@ def _save_checkpoint(
 ):
     checkpoint_path = f"{args.checkpoint_path}/g_{steps:08d}"
     save_checkpoint(
-        checkpoint_path, {"generator": (generator.module if config.num_gpus > 1 else generator).state_dict()}
+        checkpoint_path, {"generator": generator.state_dict()}
     )
     checkpoint_path = f"{args.checkpoint_path}/do_{steps:08d}"
     save_checkpoint(
         checkpoint_path,
         {
-            "mpd": (mpd.module if config.num_gpus > 1 else mpd).state_dict(),
-            "msd": (msd.module if config.num_gpus > 1 else msd).state_dict(),
+            "mpd": mpd.state_dict(),
+            "msd": msd.state_dict(),
             "optim_g": optim_g.state_dict(),
             "optim_d": optim_d.state_dict(),
             "steps": steps,
@@ -196,36 +196,28 @@ def _init_dataloader(fileset, num_workers, shuffle, sampler, batch_size):
     return loader
 
 
-def _get_dataloaders(args, device, config: VocoderConfig, rank):
+def _get_dataloaders(args, device, config: VocoderConfig):
     train_wavs, val_wavs = get_dataset_filelist(args)
     train_set = MelDataset(train_wavs, device=device, **asdict(config))
     train_sampler = None
-    train_shuffle = False if config.num_gpus > 1 else True
+    train_shuffle = True
     train_loader = _init_dataloader(train_set, config.num_workers, train_shuffle, train_sampler, config.batch_size)
-    if rank == 0:
-        val_set = MelDataset(val_wavs, split=False, shuffle=False, **asdict(config))
-        validation_loader = _init_dataloader(val_set, 0, False, None, 1)
-        wandb.init(
-            project=config.wandb.project,
-            config=asdict(config),
-        )
-    else:
-        validation_loader = None
+    val_set = MelDataset(val_wavs, split=False, shuffle=False, **asdict(config))
+    validation_loader = _init_dataloader(val_set, 0, False, None, 1)
+    wandb.init(
+        project=config.wandb.project,
+        config=asdict(config),
+    )
     return train_sampler, train_loader, validation_loader
 
 
-def _setup_rank_train(config, rank, args, device):
+def _setup_rank_train(config, args, device):
     torch.cuda.manual_seed(config.seed)
     generator, mpd, msd, stft, optim_g, optim_d = _init_models(config, device)
-    if rank == 0:
-        _log_checkpoint_info(generator, args)
+    _log_checkpoint_info(generator, args)
     generator, mpd, msd, optim_g, optim_d, steps, last_epoch = _load_checkpoint(
         args, device, generator, mpd, msd, optim_g, optim_d
     )
-    if config.num_gpus > 1:
-        # configure_env_for_dist_training(config, rank)
-        # generator, mpd, msd = distributed_cover(generator, mpd, msd, device, rank)
-        raise NotImplementedError("Distributed training is not supported")
     generator.train()
     mpd.train()
     msd.train()
@@ -265,37 +257,30 @@ def _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim
     return loss_gen_all
 
 
-def train(rank: int, args: argparse.Namespace, config: VocoderConfig):
-    device = torch.device(f"cuda:{rank}")
-    generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps = _setup_rank_train(config, rank, args, device)
+def train(args: argparse.Namespace, config: VocoderConfig):
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps = _setup_rank_train(config, args, device)
     scheduler_g, scheduler_d = _init_schedulers(optim_g, optim_d, config, last_epoch)
-    train_sampler, train_loader, validation_loader = _get_dataloaders(args, device, config, rank)
+    _, train_loader, validation_loader = _get_dataloaders(args, device, config)
     for epoch in trange(max(0, last_epoch), args.training_epochs):
-        if rank == 0:
-            start = time.time()
-        if config.num_gpus > 1:
-            # train_sampler.set_epoch(epoch)
-            raise NotImplementedError("Distributed training is not supported")
+        start = time.time()
         for i, batch in tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch + 1}"):
-            if rank == 0:
-                start_b = time.time()
+            start_b = time.time()
             y, y_g_hat, y_mel, y_g_hat_mel = _generation_step(batch, device, config, stft, generator)
             loss_gen_all = _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim_g)
             loss_gen_all.backward()
             optim_g.step()
-            if rank == 0:
-                if steps % args.wandb_log_interval == 0:
-                    loss_logging(y_mel, y_g_hat_mel, loss_gen_all, steps, start_b)  # type: ignore
-                if steps % args.checkpoint_interval == 0 and steps != 0:
-                    _save_checkpoint(args, generator, config, steps, mpd, msd, optim_g, optim_d, epoch)
-                if steps % args.validation_interval == 0:
-                    validation(generator, validation_loader, device, config, steps, args, stft)
-                    generator.train()
+            if steps % args.wandb_log_interval == 0:
+                loss_logging(y_mel, y_g_hat_mel, loss_gen_all, steps, start_b)  # type: ignore
+            if steps % args.checkpoint_interval == 0 and steps != 0:
+                _save_checkpoint(args, generator, config, steps, mpd, msd, optim_g, optim_d, epoch)
+            if steps % args.validation_interval == 0:
+                validation(generator, validation_loader, device, config, steps, args, stft)
+                generator.train()
             steps += 1
         scheduler_g.step()
         scheduler_d.step()
-        if rank == 0:
-            print(f"Time taken for epoch {epoch + 1} is {int(time.time() - start)} sec\n")  # type: ignore
+        print(f"Time taken for epoch {epoch + 1} is {int(time.time() - start)} sec\n")  # type: ignore
 
 
 def main():
@@ -316,23 +301,8 @@ def main():
     build_env(args.config_path, args.checkpoint_path)
 
     torch.manual_seed(config.seed)
-    if torch.cuda.is_available():
-        torch.cuda.manual_seed(config.seed)
-        config.num_gpus = torch.cuda.device_count()
-        config.batch_size = config.batch_size // config.num_gpus
-        print(f"Batch size per GPU : {config.batch_size}")
-
-    # if config.num_gpus > 1:
-    #     mp.spawn(  # type: ignore
-    #         train,
-    #         nprocs=config.num_gpus,
-    #         args=(
-    #             args,
-    #             config,
-    #         ),
-    #     )
-    # else:
-    train(0, args, config)
+    print(f"Batch size per GPU : {config.batch_size}")
+    train(args, config)
 
 
 if __name__ == "__main__":
