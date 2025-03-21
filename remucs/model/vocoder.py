@@ -26,7 +26,8 @@ import shutil
 from pathlib import Path
 from dataclasses import dataclass
 
-from AutoMasher.fyp import Audio
+from AutoMasher.fyp import Audio, SongDataset
+from remucs.constants import TRAIN_SPLIT_PERCENTAGE, VALIDATION_SPLIT_PERCENTAGE
 
 import logging
 logger = logging.getLogger(__name__)
@@ -510,11 +511,14 @@ def get_mel_spectrogram(
 
 
 def get_dataset_filelist(args: Namespace) -> tuple[list, list]:
-    with open(args.input_training_file, "r", encoding="utf-8") as f:
-        training_files = [i[:-1] for i in f.readlines()]
-    with open(args.input_validation_file, "r", encoding="utf-8") as f:
-        validation_files = [i[:-1] for i in f.readlines()]
-    return training_files, validation_files
+    """Returns a tuple of train and validation file lists wav files"""
+    sd = SongDataset(args.datapath, load_on_the_fly=True)
+    audios = sd.list_files("audio")
+    audio_paths = [os.path.join(args.datapath, "audio", a) for a in audios]
+    random.shuffle(audio_paths)
+    train = audio_paths[: int(len(audio_paths) * TRAIN_SPLIT_PERCENTAGE)]
+    val = audio_paths[int(len(audio_paths) * TRAIN_SPLIT_PERCENTAGE): int(len(audio_paths) * (TRAIN_SPLIT_PERCENTAGE + VALIDATION_SPLIT_PERCENTAGE))]
+    return train, val
 
 
 class MelDataset(Dataset):
@@ -567,6 +571,8 @@ class MelDataset(Dataset):
                 else:
                     audio = audio.pad(target=self.segment_size, front=False)
 
+            audio = audio.data
+
             mel = get_mel_spectrogram(
                 audio,
                 self.n_fft,
@@ -582,7 +588,7 @@ class MelDataset(Dataset):
             raise NotImplementedError("Fine tuning not implemented (yet)")
 
         mel_loss = get_mel_spectrogram(
-            audio.data,
+            audio,
             self.n_fft,
             self.num_mels,
             self.sampling_rate,
@@ -593,7 +599,7 @@ class MelDataset(Dataset):
             center=False,
         )
 
-        return mel.squeeze(), audio.data[0], filename, mel_loss.squeeze()
+        return mel.squeeze(), audio[0], filename, mel_loss.squeeze()
 
     def cut_mel_audio(self, mel: torch.Tensor, audio: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         mel_start = random.randint(0, mel.size(2) - self.frames_per_sec - 1)

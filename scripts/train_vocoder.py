@@ -9,9 +9,8 @@ import torch
 import torch.multiprocessing as mp
 import torch.nn.functional as F
 import wandb
-from torch.nn.parallel import DistributedDataParallel
 from torch.utils.data import DistributedSampler, DataLoader
-from tqdm import trange
+from tqdm import trange, tqdm
 
 from torch.optim.adamw import AdamW
 
@@ -30,6 +29,8 @@ from remucs.model.vocoder import (
     VocoderConfig,
     build_env,
 )
+
+from dataclasses import asdict
 
 warnings.simplefilter(action="ignore", category=FutureWarning)
 
@@ -127,7 +128,7 @@ def validation(generator, validation_loader, device, config, steps, args, stft):
         spec, phase = generator(x.to(device))
         y_g_hat = stft.inverse(spec, phase)
         y_mel = y_mel.to(device)
-        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **config)
+        y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
         val_err_tot += F.l1_loss(y_mel, y_g_hat_mel).item()
 
         if steps == 0:
@@ -163,7 +164,10 @@ def _init_models(config, device):
     generator = Generator(config).to(device)
     mpd = MultiPeriodDiscriminator(config.discriminator_periods).to(device)
     msd = MultiScaleDiscriminator().to(device)
-    stft = TorchSTFT(**config).to(device)
+    stft = TorchSTFT(
+        istft_filter_length=config.istft_filter_length,
+        istft_hop_length=config.istft_hop_length,
+    ).to(device)
     optim_g = AdamW(generator.parameters(), config.learning_rate, betas=(config.adam_b1, config.adam_b2))
     optim_d = AdamW(
         itertools.chain(msd.parameters(), mpd.parameters()),
@@ -171,13 +175,6 @@ def _init_models(config, device):
         betas=(config.adam_b1, config.adam_b2),
     )
     return generator, mpd, msd, stft, optim_g, optim_d
-
-
-def distributed_cover(generator, mpd, msd, device, rank):
-    generator = DistributedDataParallel(generator, device_ids=[rank]).to(device)
-    mpd = DistributedDataParallel(mpd, device_ids=[rank]).to(device)
-    msd = DistributedDataParallel(msd, device_ids=[rank]).to(device)
-    return generator, mpd, msd
 
 
 def _init_schedulers(optim_g, optim_d, config, last_epoch):
@@ -199,16 +196,19 @@ def _init_dataloader(fileset, num_workers, shuffle, sampler, batch_size):
     return loader
 
 
-def _get_dataloaders(args, device, config, rank):
-    training_filelist, validation_filelist = get_dataset_filelist(args)
-    train_set = MelDataset(training_filelist, device=device, **config)
-    train_sampler = DistributedSampler(train_set) if config.num_gpus > 1 else None
+def _get_dataloaders(args, device, config: VocoderConfig, rank):
+    train_wavs, val_wavs = get_dataset_filelist(args)
+    train_set = MelDataset(train_wavs, device=device, **asdict(config))
+    train_sampler = None
     train_shuffle = False if config.num_gpus > 1 else True
     train_loader = _init_dataloader(train_set, config.num_workers, train_shuffle, train_sampler, config.batch_size)
     if rank == 0:
-        val_set = MelDataset(validation_filelist, split=False, shuffle=False, **config)
-        validation_loader = _init_dataloader(val_set, 1, False, None, 1)
-        wandb.init(project=config["wandb"]["project"])
+        val_set = MelDataset(val_wavs, split=False, shuffle=False, **asdict(config))
+        validation_loader = _init_dataloader(val_set, 0, False, None, 1)
+        wandb.init(
+            project=config.wandb.project,
+            config=asdict(config),
+        )
     else:
         validation_loader = None
     return train_sampler, train_loader, validation_loader
@@ -240,7 +240,7 @@ def _generation_step(batch, device, config, stft, generator):
     y = y.unsqueeze(1)
     spec, phase = generator(x)
     y_g_hat = stft.inverse(spec, phase)
-    y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **config)
+    y_g_hat_mel = get_mel_spectrogram(y_g_hat.squeeze(1), **asdict(config))
     return y, y_g_hat, y_mel, y_g_hat_mel
 
 
@@ -265,7 +265,7 @@ def _train_step(y, y_g_hat, y_mel, y_g_hat_mel, config, optim_d, mpd, msd, optim
     return loss_gen_all
 
 
-def train(rank, args: argparse.Namespace, config: VocoderConfig):
+def train(rank: int, args: argparse.Namespace, config: VocoderConfig):
     device = torch.device(f"cuda:{rank}")
     generator, mpd, msd, last_epoch, stft, optim_d, optim_g, steps = _setup_rank_train(config, rank, args, device)
     scheduler_g, scheduler_d = _init_schedulers(optim_g, optim_d, config, last_epoch)
@@ -273,11 +273,10 @@ def train(rank, args: argparse.Namespace, config: VocoderConfig):
     for epoch in trange(max(0, last_epoch), args.training_epochs):
         if rank == 0:
             start = time.time()
-            print(f"Epoch: {epoch + 1}")
         if config.num_gpus > 1:
             # train_sampler.set_epoch(epoch)
             raise NotImplementedError("Distributed training is not supported")
-        for i, batch in enumerate(train_loader):
+        for i, batch in tqdm(enumerate(train_loader), total=len(train_loader), desc=f"Epoch {epoch + 1}"):
             if rank == 0:
                 start_b = time.time()
             y, y_g_hat, y_mel, y_g_hat_mel = _generation_step(batch, device, config, stft, generator)
@@ -303,11 +302,8 @@ def main():
     print("Initializing Training Process...")
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("-c", "--config_path", help="path to config/config.json")
-    parser.add_argument("--input_training_file", type=str)
-    parser.add_argument("--input_validation_file", type=str)
-    parser.add_argument("--input_mels_dir", default="")
-    parser.add_argument("--fine_tuning", default=False, type=bool)
+    parser.add_argument("-c", "--config_path", help="path to config/config.json", default="./resources/config/vocoder.json")
+    parser.add_argument("--datapath", type=str, help="Path to the wav files")
     parser.add_argument("--checkpoint_path", default="/app/new_checkpoints")
     parser.add_argument("--training_epochs", default=1, type=int)
     parser.add_argument("--wandb_log_interval", default=1, type=int, help="Once per n steps")
@@ -326,17 +322,17 @@ def main():
         config.batch_size = config.batch_size // config.num_gpus
         print(f"Batch size per GPU : {config.batch_size}")
 
-    if config.num_gpus > 1:
-        mp.spawn(  # type: ignore
-            train,
-            nprocs=config.num_gpus,
-            args=(
-                args,
-                config,
-            ),
-        )
-    else:
-        train(0, args, config)
+    # if config.num_gpus > 1:
+    #     mp.spawn(  # type: ignore
+    #         train,
+    #         nprocs=config.num_gpus,
+    #         args=(
+    #             args,
+    #             config,
+    #         ),
+    #     )
+    # else:
+    train(0, args, config)
 
 
 if __name__ == "__main__":
